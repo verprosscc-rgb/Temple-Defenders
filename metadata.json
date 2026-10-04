@@ -1,0 +1,6 @@
+{
+  "name": "Chrono Guardians: Anantha Temple Defense",
+  "description": "A time-travel historical action RPG where players journey from a futuristic lobby to Medieval and Colonial India over a 7-day cycle to gather allies, fortify villages, and defend the Anantha Padmanabha Swamy Temple.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
