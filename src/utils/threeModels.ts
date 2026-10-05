@@ -364,6 +364,19 @@ function createAnatomicalHeadGeometry(isFemale: boolean): THREE.BufferGeometry {
       v.z *= 1.0 - Math.pow(-y, 1.75) * 0.1;
     }
 
+    // Connect the base of the skull directly into the anatomical neck column so it never pinches to a spherical tip
+    if (y < -0.22 && z < 0.25) {
+      const neckBlend = Math.min(1.0, (-y - 0.22) / 0.55);
+      const targetR = isFemale ? 0.074 : 0.092;
+      const curR = Math.hypot(v.x, v.z);
+      if (curR < targetR) {
+        const factor = (targetR / Math.max(0.001, curR)) * neckBlend + (1 - neckBlend);
+        v.x *= factor;
+        v.z *= factor;
+      }
+      v.y -= neckBlend * 0.035;
+    }
+
     pos.setXYZ(i, v.x, v.y, v.z);
   }
 
@@ -388,7 +401,7 @@ function getTorsoCrossSection(t: number, theta: number, isFemale: boolean, shell
   const waistW = isFemale ? 0.102 : 0.146;
   const waistD = isFemale ? 0.078 : 0.110;
   const chestW = isFemale ? 0.160 : 0.268;
-  const chestD = isFemale ? 0.128 : 0.146;
+  const chestD = isFemale ? 0.118 : 0.146;
   const neckBaseW = isFemale ? 0.078 : 0.118;
   const neckBaseD = isFemale ? 0.074 : 0.112;
   const neckW = isFemale ? 0.068 : 0.102;
@@ -427,7 +440,7 @@ function getTorsoCrossSection(t: number, theta: number, isFemale: boolean, shell
 
   // Lateral bust fullness for female / extra upper-lat flare for buff male
   if (isFemale && cosT > -0.1) {
-    rx += gaussian(t, 0.635, 0.068) * 0.034 * Math.max(0, cosT);
+    rx += gaussian(t, 0.635, 0.068) * 0.015 * Math.max(0, cosT);
   } else if (!isFemale) {
     rx += gaussian(t, 0.64, 0.095) * 0.032;
   }
@@ -451,11 +464,11 @@ function getTorsoCrossSection(t: number, theta: number, isFemale: boolean, shell
       const abRowWave = Math.cos((t - 0.33) * 36.0) * 0.5 + 0.5;
       z += abColumn * (0.014 + abRowWave * 0.010);
     } else {
-      // Female Avatar: Strong, prominent forward-bulging chest / bust contour positioned higher on the upper chest
-      const bustY = gaussian(t, 0.635, 0.072);
-      const bustLobe = gaussian(absX, 0.060, 0.052) + 0.42 * gaussian(absX, 0.0, 0.040);
-      const cleavage = gaussian(absX, 0.0, 0.018) * gaussian(t, 0.635, 0.064);
-      z += bustY * bustLobe * 0.175 * Math.pow(Math.max(0, cosT), 0.52) - cleavage * 0.042;
+      // Female Avatar: Proportionate modestly contoured bust positioned gracefully on upper chest
+      const bustY = gaussian(t, 0.635, 0.070);
+      const bustLobe = gaussian(absX, 0.054, 0.046) + 0.28 * gaussian(absX, 0.0, 0.034);
+      const cleavage = gaussian(absX, 0.0, 0.018) * gaussian(t, 0.635, 0.062);
+      z += bustY * bustLobe * 0.078 * Math.pow(Math.max(0, cosT), 0.52) - cleavage * 0.024;
     }
 
     const navel = gaussian(t, 0.31, 0.018) * gaussian(absX, 0.0, 0.016);
@@ -2296,27 +2309,27 @@ export function createHumanRig(opts: HumanRigOptions): THREE.Group {
   upperGarmentMesh.receiveShadow = true;
   upperBodyGroup.add(upperGarmentMesh);
 
-  // Prominent Forward-Bulging Sculpted Bust Cups on Female Avatar
+  // Naturally Contoured Sculpted Bust Cups on Female Avatar (Modestly scaled)
   if (isFemale) {
     [-1, 1].forEach((side) => {
-      // Main forward-projecting choli bust dome positioned higher on the upper chest
+      // Main naturally proportioned choli bust dome positioned gracefully on the upper chest
       const bustCup = new THREE.Mesh(
-        new THREE.SphereGeometry(0.088, 28, 22),
+        new THREE.SphereGeometry(0.054, 24, 18),
         upperClothMat
       );
-      bustCup.scale.set(1.02, 0.96, 1.68);
-      bustCup.position.set(side * 0.062, 1.535, 0.165);
+      bustCup.scale.set(0.90, 0.88, 1.04);
+      bustCup.position.set(side * 0.052, 1.49, 0.096);
       bustCup.castShadow = true;
       bustCup.receiveShadow = true;
       upperBodyGroup.add(bustCup);
 
       // Upper bust slope blending smoothly into the neckline
       const upperBustSlope = new THREE.Mesh(
-        new THREE.SphereGeometry(0.068, 20, 16),
+        new THREE.SphereGeometry(0.042, 16, 12),
         charSkinMat
       );
-      upperBustSlope.scale.set(0.96, 0.88, 1.42);
-      upperBustSlope.position.set(side * 0.054, 1.585, 0.128);
+      upperBustSlope.scale.set(0.88, 0.82, 0.95);
+      upperBustSlope.position.set(side * 0.046, 1.535, 0.082);
       upperBustSlope.castShadow = true;
       upperBodyGroup.add(upperBustSlope);
     });
@@ -2352,11 +2365,11 @@ export function createHumanRig(opts: HumanRigOptions): THREE.Group {
   // Layer F: Traditional Gold Kanthahara (Royal Necklace at Collarbone)
   if (!isEnemyBritish) {
     const necklace = new THREE.Mesh(
-      new THREE.TorusGeometry(isFemale ? 0.094 : 0.125, 0.014, 10, 24),
+      new THREE.TorusGeometry(isFemale ? 0.088 : 0.125, 0.013, 10, 24),
       goldMat
     );
     necklace.rotation.x = Math.PI / 2 + 0.25;
-    necklace.position.set(0, 1.69, 0.025);
+    necklace.position.set(0, isFemale ? 1.59 : 1.69, 0.020);
     upperBodyGroup.add(necklace);
   }
 
@@ -2376,11 +2389,11 @@ export function createHumanRig(opts: HumanRigOptions): THREE.Group {
   if (isFemale) {
     [-1, 1].forEach((side) => {
       const armorBustCup = new THREE.Mesh(
-        new THREE.SphereGeometry(0.092, 24, 20),
+        new THREE.SphereGeometry(0.080, 22, 18),
         activeArmorMat
       );
-      armorBustCup.scale.set(1.04, 0.98, 1.70);
-      armorBustCup.position.set(side * 0.062, 1.535, 0.172);
+      armorBustCup.scale.set(1.0, 0.95, 1.30);
+      armorBustCup.position.set(side * 0.056, 1.515, 0.128);
       armorBustCup.castShadow = true;
       armorGroup.add(armorBustCup);
     });
@@ -2401,37 +2414,46 @@ export function createHumanRig(opts: HumanRigOptions): THREE.Group {
   // ============================================================================
   // 2. SEAMLESSLY ATTACHED HUMAN HEAD, THICK MUSCULAR NECK & TRAPEZIUS BRIDGE
   // ============================================================================
-  // Flared Anatomical Neck Cylinder embedded deep inside the chest (y = 1.58) and deep inside the head (y = 1.94)!
+  // Flared Anatomical Neck Cylinder embedded deep inside the chest and deep inside the head
   const neckMesh = new THREE.Mesh(
     new THREE.CylinderGeometry(
-      isFemale ? 0.072 : 0.096,
-      isFemale ? 0.098 : 0.134,
-      0.36,
+      isFemale ? 0.082 : 0.096,
+      isFemale ? 0.112 : 0.134,
+      isFemale ? 0.32 : 0.36,
       28
     ),
     charSkinMat
   );
-  neckMesh.position.set(0, 1.76, 0.01);
+  neckMesh.position.set(0, isFemale ? 1.66 : 1.76, 0.008);
   neckMesh.castShadow = true;
   upperBodyGroup.add(neckMesh);
 
   // Sculpted Trapezius & Submental Jaw-to-Neck Bridge so the head is 100% attached with ZERO gap!
   const neckTrapeziusBase = new THREE.Mesh(
-    new THREE.SphereGeometry(isFemale ? 0.105 : 0.158, 24, 18),
+    new THREE.SphereGeometry(isFemale ? 0.128 : 0.158, 24, 18),
     charSkinMat
   );
-  neckTrapeziusBase.scale.set(isFemale ? 1.18 : 1.32, 0.75, 0.94);
-  neckTrapeziusBase.position.set(0, 1.68, 0.005);
+  neckTrapeziusBase.scale.set(isFemale ? 1.25 : 1.32, isFemale ? 0.85 : 0.75, 0.94);
+  neckTrapeziusBase.position.set(0, isFemale ? 1.60 : 1.68, 0.005);
   neckTrapeziusBase.castShadow = true;
   upperBodyGroup.add(neckTrapeziusBase);
 
   const submentalJawBridge = new THREE.Mesh(
-    new THREE.SphereGeometry(isFemale ? 0.082 : 0.106, 20, 16),
+    new THREE.SphereGeometry(isFemale ? 0.092 : 0.106, 20, 16),
     charSkinMat
   );
-  submentalJawBridge.scale.set(0.95, 0.85, 1.12);
-  submentalJawBridge.position.set(0, 1.82, 0.025);
+  submentalJawBridge.scale.set(1.02, 0.90, 1.15);
+  submentalJawBridge.position.set(0, isFemale ? 1.68 : 1.82, 0.020);
   upperBodyGroup.add(submentalJawBridge);
+
+  // Flared throat & nape skin connector embedding the lower jaw, ears, and base of skull seamlessly into the torso
+  const throatNapeConnector = new THREE.Mesh(
+    new THREE.CapsuleGeometry(isFemale ? 0.082 : 0.102, isFemale ? 0.16 : 0.18, 12, 16),
+    charSkinMat
+  );
+  throatNapeConnector.position.set(0, isFemale ? 1.66 : 1.76, 0.005);
+  throatNapeConnector.castShadow = true;
+  upperBodyGroup.add(throatNapeConnector);
 
   // Seamless Rounded Pelvis & Hip Bridge connecting the bottom of the torso directly to both legs!
   const pelvisBridge = new THREE.Mesh(
@@ -2444,9 +2466,9 @@ export function createHumanRig(opts: HumanRigOptions): THREE.Group {
   pelvisBridge.receiveShadow = true;
   upperBodyGroup.add(pelvisBridge);
 
-  // Head lowered to y = 1.92 so the chin & jaw sit directly embedded onto the neck & collarbones!
+  // Head seamlessly embedded into the neck and collarbones with zero gap!
   const headGroup = new THREE.Group();
-  headGroup.position.set(0, 1.92, 0.016);
+  headGroup.position.set(0, isFemale ? 1.76 : 1.92, isFemale ? 0.006 : 0.016);
   upperBodyGroup.add(headGroup);
 
   const faceTex = getRealisticHumanFaceTexture(
@@ -3947,6 +3969,8 @@ export function createTempleAndVillage3D(): {
   shelterGroup: THREE.Group;
   gopuramTiers: THREE.Mesh[];
   forestArrowsGroup: THREE.Group;
+  templeDeityGroup: THREE.Group;
+  shelterStages: THREE.Group[];
 } {
   const envGroup = new THREE.Group();
   const templeGroup = new THREE.Group();
@@ -4094,37 +4118,497 @@ export function createTempleAndVillage3D(): {
   templeLight.position.set(6, 5, 0);
   templeGroup.add(templeLight);
 
+  // ============================================================================
+  // 1B. SACRED DEITY (LORD SRI ANANTHA PADMANABHA SWAMY) IN SANCTUM (GARBHAGRIHA)
+  // Added during Day 6 Temple Restoration: Divine Sheshanaga Serpent & Deity Murti
+  // ============================================================================
+  const templeDeityGroup = new THREE.Group();
+  templeDeityGroup.position.set(0, 1.2, 0); // Center of the sacred temple plinth
+
+  // Sanctum Polished Shaligram / Black Granite Pedestal
+  const peedamMat = new THREE.MeshStandardMaterial({
+    color: 0x090d16,
+    roughness: 0.25,
+    metalness: 0.35,
+  });
+  const peedam = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.55, 3.2), peedamMat);
+  peedam.position.set(0, 0.28, 0);
+  peedam.castShadow = true;
+  peedam.receiveShadow = true;
+  templeDeityGroup.add(peedam);
+
+  // Golden Carved Lotus Petal Rim around Pedestal
+  const lotusBorder = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.12, 3.4), goldMat);
+  lotusBorder.position.set(0, 0.58, 0);
+  templeDeityGroup.add(lotusBorder);
+
+  // Divine Celestial Serpent Adisesha (Sheshanaga) Coiled Bed
+  const serpentScalesMat = new THREE.MeshStandardMaterial({
+    color: 0x064e3b,
+    roughness: 0.45,
+    metalness: 0.4,
+  });
+  [-0.6, 0, 0.6].forEach((cz, idx) => {
+    const coil = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.38, 0.42, 3.4, 12),
+      serpentScalesMat
+    );
+    coil.rotation.z = Math.PI / 2;
+    coil.position.set(0, 0.82 + idx * 0.12, cz);
+    coil.castShadow = true;
+    templeDeityGroup.add(coil);
+  });
+
+  // 5 Majestic Divine Cobra Hoods arching over the Deity's Head like an umbrella
+  const serpentHoodsGroup = new THREE.Group();
+  serpentHoodsGroup.position.set(1.4, 1.35, 0);
+  [-0.65, -0.32, 0, 0.32, 0.65].forEach((hz, i) => {
+    const hoodH = 1.35 - Math.abs(i - 2) * 0.16;
+    const hood = new THREE.Mesh(
+      new THREE.ConeGeometry(0.24, hoodH, 8),
+      serpentScalesMat
+    );
+    hood.rotation.x = (i - 2) * 0.12;
+    hood.rotation.z = -0.35; // Arching forward toward west
+    hood.position.set(0, hoodH * 0.45, hz);
+    hood.castShadow = true;
+    serpentHoodsGroup.add(hood);
+
+    // Glowing Golden Nagaratna (Crest Jewel) on each serpent hood
+    const gem = new THREE.Mesh(
+      new THREE.SphereGeometry(0.08, 8, 8),
+      new THREE.MeshBasicMaterial({ color: 0xfef08a })
+    );
+    gem.position.set(0.08, hoodH * 0.8, hz);
+    serpentHoodsGroup.add(gem);
+  });
+  templeDeityGroup.add(serpentHoodsGroup);
+
+  // Sacred Deity (Lord Sri Anantha Padmanabha Swamy) in reclining Ananthasayana posture
+  const deityStoneMat = new THREE.MeshStandardMaterial({
+    color: 0x0f172a, // Deep sacred black/indigo granite
+    roughness: 0.3,
+    metalness: 0.25,
+  });
+
+  // Torso & Divine Upper Body
+  const deityTorso = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.55, 0.75), deityStoneMat);
+  deityTorso.position.set(0.3, 1.3, 0);
+  deityTorso.castShadow = true;
+  templeDeityGroup.add(deityTorso);
+
+  // Golden Royal Kirita Mukuta (Tiered Temple Crown)
+  const crown = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.18, 0.28, 0.85, 12),
+    goldMat
+  );
+  crown.rotation.z = -Math.PI / 2;
+  crown.position.set(1.45, 1.38, 0);
+  crown.castShadow = true;
+  templeDeityGroup.add(crown);
+
+  // Head of the Deity
+  const deityHead = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 12), deityStoneMat);
+  deityHead.position.set(1.15, 1.35, 0);
+  templeDeityGroup.add(deityHead);
+
+  // Golden Pitambara Silk Dhoti over Lower Body & Legs
+  const pitambara = new THREE.Mesh(
+    new THREE.BoxGeometry(1.8, 0.48, 0.65),
+    new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.4, metalness: 0.65 })
+  );
+  pitambara.position.set(-0.95, 1.25, 0);
+  pitambara.castShadow = true;
+  templeDeityGroup.add(pitambara);
+
+  // Golden Sacred Kaustubha Jewel & Ornaments
+  const kaustubha = new THREE.Mesh(new THREE.OctahedronGeometry(0.14, 1), goldMat);
+  kaustubha.position.set(0.4, 1.45, 0.38);
+  templeDeityGroup.add(kaustubha);
+
+  // Golden Lotus Flower in Deity's Hand
+  const sacredLotus = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 1), goldMat);
+  sacredLotus.position.set(-0.15, 1.48, 0.42);
+  templeDeityGroup.add(sacredLotus);
+
+  // Prabhavali / Makara Torana (Golden Divine Aureole Arch around Deity)
+  const prabhavali = new THREE.Mesh(
+    new THREE.TorusGeometry(2.35, 0.12, 8, 24, Math.PI),
+    goldMat
+  );
+  prabhavali.rotation.y = Math.PI / 2;
+  prabhavali.position.set(0, 1.3, 0);
+  templeDeityGroup.add(prabhavali);
+
+  // Radiant Golden Divine Sanctum Light
+  const deityDivineLight = new THREE.PointLight(0xffd700, 24, 22);
+  deityDivineLight.position.set(0, 2.4, 0);
+  templeDeityGroup.add(deityDivineLight);
+
+  // 4 Brass Standing Oil Lamps (Deepams / Kuthuvilakku) on Sanctum Corners
+  [
+    [-1.9, -1.3],
+    [-1.9, 1.3],
+    [1.9, -1.3],
+    [1.9, 1.3],
+  ].forEach(([lx, lz]) => {
+    const lampStem = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.08, 0.14, 1.6, 8),
+      goldMat
+    );
+    lampStem.position.set(lx, 0.8, lz);
+    lampStem.castShadow = true;
+    templeDeityGroup.add(lampStem);
+
+    const lampCup = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.1, 0.14, 8), goldMat);
+    lampCup.position.set(lx, 1.62, lz);
+    templeDeityGroup.add(lampCup);
+
+    const diyaFlame = new THREE.Mesh(
+      new THREE.SphereGeometry(0.12, 8, 8),
+      new THREE.MeshBasicMaterial({ color: 0xfef08a })
+    );
+    diyaFlame.position.set(lx, 1.76, lz);
+    templeDeityGroup.add(diyaFlame);
+  });
+
+  // Hanging Temple Bell (Ghanta) in Sanctum Portal
+  const templeBell = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.42, 10), goldMat);
+  templeBell.position.set(2.4, 3.4, 0);
+  templeDeityGroup.add(templeBell);
+
+  // Auspicious Marigold (Genda) Flower Garlands draped across the Sanctum
+  const garlandMat = new THREE.MeshStandardMaterial({
+    color: 0xf97316,
+    roughness: 0.6,
+  });
+  [-1.2, 1.2].forEach((gx) => {
+    const garland = new THREE.Mesh(
+      new THREE.TorusGeometry(0.8, 0.08, 8, 20, Math.PI),
+      garlandMat
+    );
+    garland.rotation.x = Math.PI / 2;
+    garland.position.set(gx, 2.2, 0);
+    templeDeityGroup.add(garland);
+  });
+
+  // Sacred Brass Kalasha Urns on Sanctum Corners
+  [-2.1, 2.1].forEach((kx) => {
+    const kalashBase = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 12), goldMat);
+    kalashBase.position.set(kx, 0.45, -1.6);
+    templeDeityGroup.add(kalashBase);
+    const coconut = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.28, 8), timberMat);
+    coconut.position.set(kx, 0.72, -1.6);
+    templeDeityGroup.add(coconut);
+  });
+
+  // Initially hidden until Consecrated on Day 6!
+  templeDeityGroup.visible = false;
+  templeGroup.add(templeDeityGroup);
+
+  // ============================================================================
+  // 1C. FORTIFIED VILLAGER BASE (6 Progressive Construction Stages)
+  // Truly looks like an authentic fortified medieval military base!
+  // ============================================================================
   const shelterGroup = new THREE.Group();
-  const bastionTex = createExtreme3DPBRTextures('GRANITE_MASONRY', 0x64748b, 4, 2);
-  const bastionMat = new THREE.MeshStandardMaterial({
-    color: 0x64748b,
-    map: bastionTex.map,
-    bumpMap: bastionTex.bumpMap,
-    bumpScale: 0.16,
+  shelterGroup.position.set(0, 0, 10.5); // South of temple around SHELTER_SITE_POS
+
+  const timberTex = createExtreme3DPBRTextures('TREE_BARK', 0x3f2212, 2, 3);
+  const timberMat = new THREE.MeshStandardMaterial({
+    color: 0x4a2a18,
+    map: timberTex.map,
+    bumpMap: timberTex.bumpMap,
+    bumpScale: 0.18,
+    roughness: 0.88,
+  });
+
+  const stoneFortTex = createExtreme3DPBRTextures('GRANITE_MASONRY', 0x57534e, 3, 2);
+  const stoneFortMat = new THREE.MeshStandardMaterial({
+    color: 0x57534e,
+    map: stoneFortTex.map,
+    bumpMap: stoneFortTex.bumpMap,
+    bumpScale: 0.18,
+    roughness: 0.75,
+  });
+
+  const thatchRoofMat = new THREE.MeshStandardMaterial({
+    color: 0x9a3412,
+    roughness: 0.9,
+  });
+
+  const royalBannerMat = new THREE.MeshStandardMaterial({
+    color: 0xf59e0b,
     roughness: 0.5,
-    metalness: 0.45,
   });
 
-  const northWall = new THREE.Mesh(new THREE.BoxGeometry(22, 3.2, 1.2), bastionMat);
-  northWall.position.set(0, 1.6, -9.5);
-  const southWall = new THREE.Mesh(new THREE.BoxGeometry(22, 3.2, 1.2), bastionMat);
-  southWall.position.set(0, 1.6, 9.5);
-  const eastWallTop = new THREE.Mesh(new THREE.BoxGeometry(1.2, 3.2, 7), bastionMat);
-  eastWallTop.position.set(10.5, 1.6, -6);
-  const eastWallBot = new THREE.Mesh(new THREE.BoxGeometry(1.2, 3.2, 7), bastionMat);
-  eastWallBot.position.set(10.5, 1.6, 6);
+  const shelterStages: THREE.Group[] = [];
 
-  const bunker = new THREE.Mesh(new THREE.BoxGeometry(7.5, 3.8, 5.5), bastionMat);
-  bunker.position.set(-4.5, 1.9, 10.5);
-  bunker.castShadow = true;
-
-  [northWall, southWall, eastWallTop, eastWallBot, bunker].forEach((m) => {
-    m.castShadow = true;
+  // STAGE 1: Stone & Earthwork Foundations, Ground Apron & Central Campfire
+  const stage1 = new THREE.Group();
+  const earthBermN = new THREE.Mesh(new THREE.BoxGeometry(23, 0.6, 1.8), stoneFortMat);
+  earthBermN.position.set(0, 0.3, -9);
+  const earthBermS = new THREE.Mesh(new THREE.BoxGeometry(23, 0.6, 1.8), stoneFortMat);
+  earthBermS.position.set(0, 0.3, 9);
+  const earthBermW = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.6, 18), stoneFortMat);
+  earthBermW.position.set(-11, 0.3, 0);
+  const earthBermE = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.6, 18), stoneFortMat);
+  earthBermE.position.set(11, 0.3, 0);
+  [earthBermN, earthBermS, earthBermW, earthBermE].forEach((m) => {
     m.receiveShadow = true;
-    shelterGroup.add(m);
+    m.castShadow = true;
+    stage1.add(m);
   });
 
-  shelterGroup.visible = false;
+  // Central Stone Campfire Pit with Embers
+  const campFireRing = new THREE.Mesh(
+    new THREE.TorusGeometry(1.2, 0.28, 8, 16),
+    stoneFortMat
+  );
+  campFireRing.rotation.x = -Math.PI / 2;
+  campFireRing.position.set(0, 0.2, 0);
+  stage1.add(campFireRing);
+
+  const fireWood1 = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 1.6, 6), timberMat);
+  fireWood1.rotation.z = 0.5;
+  fireWood1.position.set(0, 0.3, 0);
+  stage1.add(fireWood1);
+  const fireWood2 = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 1.6, 6), timberMat);
+  fireWood2.rotation.z = -0.5;
+  fireWood2.position.set(0, 0.3, 0);
+  stage1.add(fireWood2);
+
+  const fireFlames = new THREE.Mesh(
+    new THREE.ConeGeometry(0.55, 1.1, 8),
+    new THREE.MeshBasicMaterial({ color: 0xf97316 })
+  );
+  fireFlames.position.set(0, 0.75, 0);
+  stage1.add(fireFlames);
+
+  const shelterFireLight = new THREE.PointLight(0xf97316, 12, 18);
+  shelterFireLight.position.set(0, 1.2, 0);
+  stage1.add(shelterFireLight);
+
+  shelterGroup.add(stage1);
+  shelterStages.push(stage1);
+
+  // STAGE 2: Heavy Timber Palisade Stockade Walls with Pointed Logs
+  const stage2 = new THREE.Group();
+  // North Palisade (22m wide)
+  const palisadeN = new THREE.Mesh(new THREE.BoxGeometry(22, 3.4, 0.8), timberMat);
+  palisadeN.position.set(0, 2.0, -9);
+  palisadeN.castShadow = true;
+  stage2.add(palisadeN);
+
+  // Pointed Log Spikes along North Wall
+  for (let s = -10; s <= 10; s += 1.8) {
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.8, 6), timberMat);
+    spike.position.set(s, 4.0, -9);
+    stage2.add(spike);
+  }
+
+  // West Palisade (18m wide)
+  const palisadeW = new THREE.Mesh(new THREE.BoxGeometry(0.8, 3.4, 18), timberMat);
+  palisadeW.position.set(-11, 2.0, 0);
+  palisadeW.castShadow = true;
+  stage2.add(palisadeW);
+
+  // East Palisade (18m wide)
+  const palisadeE = new THREE.Mesh(new THREE.BoxGeometry(0.8, 3.4, 18), timberMat);
+  palisadeE.position.set(11, 2.0, 0);
+  palisadeE.castShadow = true;
+  stage2.add(palisadeE);
+
+  // South Palisade Left & Right Flanks (leaves center gateway open)
+  const palisadeS1 = new THREE.Mesh(new THREE.BoxGeometry(7.5, 3.4, 0.8), timberMat);
+  palisadeS1.position.set(-7.25, 2.0, 9);
+  palisadeS1.castShadow = true;
+  stage2.add(palisadeS1);
+  const palisadeS2 = new THREE.Mesh(new THREE.BoxGeometry(7.5, 3.4, 0.8), timberMat);
+  palisadeS2.position.set(7.25, 2.0, 9);
+  palisadeS2.castShadow = true;
+  stage2.add(palisadeS2);
+
+  shelterGroup.add(stage2);
+  shelterStages.push(stage2);
+
+  // STAGE 3: Two High Corner Watchtowers (NW and NE corners) with Flaming Braziers
+  const stage3 = new THREE.Group();
+  [
+    [-11, -9],
+    [11, -9],
+  ].forEach(([tx, tz]) => {
+    // 4 Heavy Corner Support Pillars
+    [-1.2, 1.2].forEach((px) => {
+      [-1.2, 1.2].forEach((pz) => {
+        const post = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.26, 0.32, 6.2, 8),
+          timberMat
+        );
+        post.position.set(tx + px, 3.1, tz + pz);
+        post.castShadow = true;
+        stage3.add(post);
+      });
+    });
+
+    // Elevated Guard Platform
+    const platform = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.3, 3.6), timberMat);
+    platform.position.set(tx, 4.3, tz);
+    platform.castShadow = true;
+    stage3.add(platform);
+
+    // Platform Railings
+    const railing = new THREE.Mesh(
+      new THREE.BoxGeometry(3.4, 0.9, 3.4),
+      new THREE.MeshStandardMaterial({ color: 0x4a2a18, wireframe: false })
+    );
+    railing.position.set(tx, 4.85, tz);
+    stage3.add(railing);
+
+    // Thatched/Tile Pyramidal Roof
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(2.8, 1.8, 4), thatchRoofMat);
+    roof.rotation.y = Math.PI / 4;
+    roof.position.set(tx, 6.4, tz);
+    roof.castShadow = true;
+    stage3.add(roof);
+
+    // Watchtower Flaming Torch Brazier with Light
+    const brazier = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.18, 0.5, 8), stoneFortMat);
+    brazier.position.set(tx, 4.7, tz + 1.6);
+    stage3.add(brazier);
+
+    const torchLight = new THREE.PointLight(0xf59e0b, 10, 16);
+    torchLight.position.set(tx, 5.2, tz + 1.6);
+    stage3.add(torchLight);
+  });
+
+  shelterGroup.add(stage3);
+  shelterStages.push(stage3);
+
+  // STAGE 4: Fortified South Gatehouse & Heavy Stockade Entrance Portal
+  const stage4 = new THREE.Group();
+  // Gateway Left & Right Bastion Posts
+  const gatePostL = new THREE.Mesh(new THREE.BoxGeometry(1.6, 5.4, 1.6), stoneFortMat);
+  gatePostL.position.set(-3.5, 2.7, 9);
+  gatePostL.castShadow = true;
+  stage4.add(gatePostL);
+
+  const gatePostR = new THREE.Mesh(new THREE.BoxGeometry(1.6, 5.4, 1.6), stoneFortMat);
+  gatePostR.position.set(3.5, 2.7, 9);
+  gatePostR.castShadow = true;
+  stage4.add(gatePostR);
+
+  // Overhead Heavy Defensive Lintel & Walkway
+  const gateBridge = new THREE.Mesh(new THREE.BoxGeometry(8.6, 0.6, 2.4), timberMat);
+  gateBridge.position.set(0, 5.1, 9);
+  gateBridge.castShadow = true;
+  stage4.add(gateBridge);
+
+  // Open Reinforced Stockade Doors (Angled open for troop transit)
+  const doorL = new THREE.Mesh(new THREE.BoxGeometry(3.0, 3.8, 0.3), timberMat);
+  doorL.rotation.y = 0.65;
+  doorL.position.set(-2.2, 2.1, 8.4);
+  doorL.castShadow = true;
+  stage4.add(doorL);
+
+  const doorR = new THREE.Mesh(new THREE.BoxGeometry(3.0, 3.8, 0.3), timberMat);
+  doorR.rotation.y = -0.65;
+  doorR.position.set(2.2, 2.1, 8.4);
+  doorR.castShadow = true;
+  stage4.add(doorR);
+
+  shelterGroup.add(stage4);
+  shelterStages.push(stage4);
+
+  // STAGE 5: Interior Villager Barracks Huts (West & East Cabins with Terracotta Roofs)
+  const stage5 = new THREE.Group();
+  // West Barracks (Soldier Quarters)
+  const hutW = new THREE.Mesh(new THREE.BoxGeometry(6.2, 3.2, 5.0), timberMat);
+  hutW.position.set(-6.5, 1.8, -3.5);
+  hutW.castShadow = true;
+  hutW.receiveShadow = true;
+  stage5.add(hutW);
+
+  const hutWRoof = new THREE.Mesh(new THREE.ConeGeometry(4.8, 1.8, 4), thatchRoofMat);
+  hutWRoof.rotation.y = Math.PI / 4;
+  hutWRoof.position.set(-6.5, 4.0, -3.5);
+  hutWRoof.castShadow = true;
+  stage5.add(hutWRoof);
+
+  // East Supply Cabin & Mess
+  const hutE = new THREE.Mesh(new THREE.BoxGeometry(6.2, 3.2, 5.0), timberMat);
+  hutE.position.set(6.5, 1.8, -3.5);
+  hutE.castShadow = true;
+  hutE.receiveShadow = true;
+  stage5.add(hutE);
+
+  const hutERoof = new THREE.Mesh(new THREE.ConeGeometry(4.8, 1.8, 4), thatchRoofMat);
+  hutERoof.rotation.y = Math.PI / 4;
+  hutERoof.position.set(6.5, 4.0, -3.5);
+  hutERoof.castShadow = true;
+  stage5.add(hutERoof);
+
+  shelterGroup.add(stage5);
+  shelterStages.push(stage5);
+
+  // STAGE 6: Armory, Weapon Racks, Training Dummy, Supply Crates & Kingdom Banners
+  const stage6 = new THREE.Group();
+  // Covered Weapon Rack
+  const weaponRack = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.6, 0.6), timberMat);
+  weaponRack.position.set(-4.5, 1.0, 4.5);
+  weaponRack.castShadow = true;
+  stage6.add(weaponRack);
+
+  // Spears on Rack
+  for (let sp = -0.8; sp <= 0.8; sp += 0.4) {
+    const spear = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.04, 0.04, 2.2, 6),
+      stoneFortMat
+    );
+    spear.position.set(-4.5 + sp, 1.3, 4.5);
+    stage6.add(spear);
+  }
+
+  // Straw Training Combat Dummy
+  const dummyPole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 2.0, 8), timberMat);
+  dummyPole.position.set(4.5, 1.0, 3.5);
+  stage6.add(dummyPole);
+  const dummyBody = new THREE.Mesh(
+    new THREE.BoxGeometry(0.7, 0.9, 0.4),
+    new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.9 })
+  );
+  dummyBody.position.set(4.5, 1.45, 3.5);
+  stage6.add(dummyBody);
+
+  // Supply Crates
+  [-1.5, 0, 1.5].forEach((cx, i) => {
+    const crate = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.0, 1.2), timberMat);
+    crate.position.set(-8.5, 0.5, 2.0 + cx);
+    crate.castShadow = true;
+    stage6.add(crate);
+  });
+
+  // Tall Flagstaffs with Royal Saffron Triangular Banners at Gateway
+  [-4.2, 4.2].forEach((bx) => {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 7.2, 8), timberMat);
+    pole.position.set(bx, 3.6, 9.8);
+    pole.castShadow = true;
+    stage6.add(pole);
+
+    const banner = new THREE.Mesh(new THREE.ConeGeometry(0.75, 2.4, 3), royalBannerMat);
+    banner.rotation.z = Math.PI / 2;
+    banner.position.set(bx + (bx > 0 ? 1.0 : -1.0), 6.2, 9.8);
+    banner.castShadow = true;
+    stage6.add(banner);
+  });
+
+  shelterGroup.add(stage6);
+  shelterStages.push(stage6);
+
+  // Villager military base stages start hidden and reveal as player constructs them with multiple 'E' presses
+  shelterStages.forEach((st) => {
+    st.visible = false;
+  });
+  shelterGroup.visible = true;
   templeGroup.add(shelterGroup);
 
   // ============================================================================
@@ -4683,9 +5167,9 @@ export function createTempleAndVillage3D(): {
   fireFlame.position.set(0, 0.85, 0);
   campGroup.add(fireFlame);
 
-  const campFireLight = new THREE.PointLight(0xf97316, 22, 34);
-  campFireLight.position.set(0, 2.8, 0);
-  campGroup.add(campFireLight);
+  const enemyCampFireLight = new THREE.PointLight(0xf97316, 22, 34);
+  enemyCampFireLight.position.set(0, 2.8, 0);
+  campGroup.add(enemyCampFireLight);
 
   // ============================================================================
   // 6. REALISTIC WESTERN GHATS MOUNTAIN RIDGES ALONG THE HORIZON
@@ -4711,5 +5195,13 @@ export function createTempleAndVillage3D(): {
     envGroup.add(peak);
   }
 
-  return { envGroup, templeGroup, shelterGroup, gopuramTiers, forestArrowsGroup };
+  return {
+    envGroup,
+    templeGroup,
+    shelterGroup,
+    gopuramTiers,
+    forestArrowsGroup,
+    templeDeityGroup,
+    shelterStages,
+  };
 }

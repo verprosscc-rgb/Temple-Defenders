@@ -9,6 +9,7 @@ import {
   Inventory,
   TimelineType,
   TreeNode,
+  DeviceMode,
 } from '../types/game';
 import {
   createExtreme3DPBRTextures,
@@ -31,7 +32,12 @@ import {
   Shield,
   Camera,
   Moon,
+  Smartphone,
+  Monitor,
+  ArrowLeft,
+  Heart,
 } from 'lucide-react';
+import { VirtualJoystick, JoystickData } from './VirtualJoystick';
 
 interface TimelineWorldProps {
   gender: Gender;
@@ -40,6 +46,8 @@ interface TimelineWorldProps {
   squadSize: number;
   onCompleteTimeline: (timeline: TimelineType) => void;
   onReturnToLobby: () => void;
+  deviceMode?: DeviceMode;
+  onToggleDeviceMode?: () => void;
 }
 
 const TEMPLE_POS = { x: 165, y: 275 };
@@ -61,8 +69,11 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
   squadSize,
   onCompleteTimeline,
   onReturnToLobby,
+  deviceMode = 'computer',
+  onToggleDeviceMode,
 }) => {
   const mountContainerRef = useRef<HTMLDivElement | null>(null);
+  const joystickRef = useRef<JoystickData>({ x: 0, y: 0, active: false, angle: 0, distance: 0 });
 
   const mountName = timeline === 'MEDIEVAL' ? 'Ox' : 'Horse';
   const mountPlural = timeline === 'MEDIEVAL' ? 'Oxen' : 'Horses';
@@ -73,15 +84,15 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
       ? 'Sultanate Brute King (Giant Ox)'
       : 'Colonial Brute Commander (Giant Warhorse)';
 
-  // Core 7-Day State
+  // Core 6-Day State
   const [day, setDay] = useState<number>(1);
   const [isNight, setIsNight] = useState<boolean>(false);
   const [cameraMode, setCameraMode] = useState<'FOLLOW' | 'OVERVIEW'>('FOLLOW');
   const [statusBanner, setStatusBanner] = useState<string>(
-    `Day 1: Follow your Friendly Spirit out of your house to the Old Man Next Door [E] to borrow the Ancient Forest Map!`
+    `Day 1: Follow your Friendly Spirit out of the house to complete the Villagers' Quests (Farmer, Cook, Animal Owner, Blacksmith & Arming 10 Villagers)!`
   );
   const [spiritBanner, setSpiritBanner] = useState<string>(
-    `Friendly Spirit: "Welcome to this timeline, Chosen Warrior! Follow me out of your house to the Old Man Next Door and press [E] to borrow his Map — the enemy camp is so deep in the forest that only his map conjures glowing arrows to guide you!"`
+    `Friendly Spirit: "Welcome to this timeline, Chosen Warrior! On Day 1, we must help our villagers and arm them to prepare for battle! Follow me to the Farmer's fields to till 1 acre [E]!"`
   );
   const [nearbyPrompt, setNearbyPrompt] = useState<string | null>(null);
   const [combatToast, setCombatToast] = useState<string | null>(null);
@@ -123,6 +134,10 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
   const [shelterBuilt, setShelterBuilt] = useState<boolean>(false);
   const [shelterBuilding, setShelterBuilding] = useState<boolean>(false);
   const [shelterProgress, setShelterProgress] = useState<number>(0);
+  const [baseStage, setBaseStage] = useState<number>(0);
+  const baseStageRef = useRef<number>(0);
+  const [templeStage, setTempleStage] = useState<number>(0);
+  const templeStageRef = useRef<number>(0);
   const [isSleepingBlackScreen, setIsSleepingBlackScreen] = useState<boolean>(false);
   const [farmerRewardClaimed, setFarmerRewardClaimed] = useState<boolean>(false);
   const [cookTraded, setCookTraded] = useState<boolean>(false);
@@ -199,6 +214,9 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
   const templeRebuiltRef = useRef<boolean>(false);
   const templeRebuildingRef = useRef<boolean>(false);
   const templeProgressRef = useRef<number>(0);
+  const shelterStagesRef = useRef<THREE.Group[]>([]);
+  const templeDeityGroupRef = useRef<THREE.Group | null>(null);
+  const gopuramTiersRef = useRef<THREE.Mesh[]>([]);
 
   const enemiesRef = useRef<EnemyEntity[]>([]);
   const raidSpawnQueueRef = useRef<number>(0);
@@ -630,20 +648,14 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
   // Core Storyline / NPC Interactions (Strictly Once-Per-Reward!)
   const executeBorrowMap = () => {
     if (mapBorrowedRef.current || inventoryRef.current.hasMap) {
-      showToast('You have already borrowed the Map from the Old Man!');
+      showToast('You have already borrowed the Ancient Forest Map from the Old Man!');
       return;
     }
     mapBorrowedRef.current = true;
     updateInventory((prev) => ({ ...prev, hasMap: true }));
     sound.playGather();
     showToast(
-      'Borrowed Map! Friendly Spirit revealed the Forest Arrows and vanished until Day 2 Morning!'
-    );
-    setStatusBanner(
-      `Day 1: The Friendly Spirit showed you the glowing arrows and disappeared! Follow the arrows deep into the forest, defeat the 10 enemy guards to collect shelter materials, then return to the village to sleep [E]!`
-    );
-    setSpiritBanner(
-      `Friendly Spirit (Before Vanishing): "Behold the glowing golden arrows leading through the forest to the enemy camp! Defeat the 10 guards, collect their materials, and return to the village house to sleep — I will wake you on Day 2 morning!"`
+      'Borrowed Ancient Forest Map! Shows the layout and arrows toward the Enemy Camp for Day 2!'
     );
   };
 
@@ -734,36 +746,8 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
     if (isSleepingRef.current) return;
     const currentDay = dayRef.current;
 
-    // Day 1 Sleep Check: Must have borrowed the map and either defeated the 10 guards or returned to the village from the forest
+    // Day 1 Sleep Check: Player can sleep ONLY after completing ALL the Villagers' Quests!
     if (currentDay === 1) {
-      if (!inventoryRef.current.hasMap) {
-        showToast('Borrow the Map from the Old Man Next Door [E] first!');
-        return;
-      }
-      if (campGuardsDefeatedRef.current < 10 && !hasVisitedForestDay1Ref.current) {
-        showToast(
-          `Follow the glowing forest arrows to fight the 10 Day 1 Enemy Guards first (${campGuardsDefeatedRef.current}/10)!`
-        );
-        return;
-      }
-      // Ensure Day 1 enemy soldier materials & gear are granted ONCE only when completing Day 1
-      if (!day1GuardsRewardClaimedRef.current) {
-        day1GuardsRewardClaimedRef.current = true;
-        campGuardsDefeatedRef.current = 10;
-        setCampGuardsDefeated(10);
-        enemiesRef.current = [];
-        updateInventory((inv) => ({
-          ...inv,
-          fullIronArmour: true,
-          powerfulSword: true,
-          wallMaterials: 100,
-          personalMount: true,
-        }));
-        playerRef.current.mounted = true;
-        setMounted(true);
-      }
-    } else if (currentDay === 2) {
-      // Day 2 Sleep Check: Player can sleep ONLY after completing ALL the Villagers' Quests!
       const allVillagerQuestsDone =
         farmerRewardClaimedRef.current &&
         cookTradedRef.current &&
@@ -772,15 +756,23 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
         buffVillagersArmedRef.current >= 10;
       if (!allVillagerQuestsDone) {
         showToast(
-          "You can sleep on Day 2 ONLY after completing all the Villagers' Quests (Farmer, Cook, Animal Owner, Blacksmith & Arming 10 Villagers)!"
+          "Complete all the Villagers' Quests on Day 1 first (Farmer, Cook, Animal Owner, Blacksmith & Arming 10 Villagers) to sleep in Bed!"
+        );
+        return;
+      }
+    } else if (currentDay === 2) {
+      // Day 2 Sleep Check: Player must attack and defeat the 10 guards at the Enemy Camp!
+      if (campGuardsDefeatedRef.current < 10) {
+        showToast(
+          `Attack the Enemy Camp on Day 2 first! Defeat the enemy guards (${campGuardsDefeatedRef.current}/10) to collect base building materials!`
         );
         return;
       }
     } else if (currentDay === 3) {
-      // Day 3 Sleep Check: Player can sleep ONLY after completing the Villager Shelter!
+      // Day 3 Sleep Check: Player can sleep ONLY after completing the Villager Military Base (all 6 stages)!
       if (!shelterBuiltRef.current) {
         showToast(
-          'You can sleep on Day 3 ONLY after completing the Shelter for all the villagers [E]!'
+          `Finish building the Villager Military Base on Day 3 first [E] (Stage ${baseStageRef.current}/6 Built)!`
         );
         return;
       }
@@ -788,7 +780,7 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
       // Day 4 Sleep Check: Player can sleep ONLY after fighting & defeating all 50 enemy soldiers!
       if (raidSoldiersDefeatedRef.current < 50) {
         showToast(
-          `You can sleep on Day 4 ONLY after defeating the army of 50 enemy soldiers (${raidSoldiersDefeatedRef.current}/50)!`
+          `Fight off and defeat the 50 enemy attackers on Day 4 first (${raidSoldiersDefeatedRef.current}/50 defeated)!`
         );
         return;
       }
@@ -796,7 +788,7 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
       // Day 5 Sleep Check: Player can sleep ONLY after defeating the Final Boss and recovering the stolen artifacts!
       if (!bossDefeatedRef.current) {
         showToast(
-          `You can sleep on Day 5 ONLY after defeating the ${bossTitle} and recovering the stolen artifacts!`
+          `Defeat the ${bossTitle} on Day 5 first and recover the stolen temple artifacts!`
         );
         return;
       }
@@ -834,55 +826,88 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
       });
 
       if (nextDay === 2) {
-        showToast('Friendly Spirit: "Follow me!" (Enemy forces arrive Day 5 — complete Villagers’ Quests today!)');
-        setStatusBanner('Day 2 Morning: Follow the Friendly Spirit!');
-        setSpiritBanner('Friendly Spirit: "Follow me!"');
+        showToast('Friendly Spirit: "Day 2 Morning: Attack the Enemy Camp! Follow the glowing forest path arrows!"');
+        setStatusBanner('Day 2 Morning: Attack the Enemy Camp! Follow the glowing forest path arrows with your 10 armed buff villagers!');
+        setSpiritBanner('Friendly Spirit: "Follow the glowing forest arrows to attack the Enemy Camp and recover base building materials!"');
       } else if (nextDay === 3) {
-        showToast('Friendly Spirit: "Follow me!"');
-        setStatusBanner('Day 3 Morning: Follow the Friendly Spirit!');
-        setSpiritBanner('Friendly Spirit: "Follow me!"');
+        showToast('Friendly Spirit: "Day 3 Morning: Construct the Villager Military Base! Walk south of the temple and press [E] multiple times!"');
+        setStatusBanner('Day 3 Morning: Build the Fortified Villager Base! Press [E] multiple times to construct each stage!');
+        setSpiritBanner('Friendly Spirit: "Follow me south of the temple to hammer and construct the Villager Military Base [E]!"');
       } else if (nextDay === 4) {
         startDay4ArmyAttack();
       } else if (nextDay === 5) {
         startDay5FinalBoss();
       } else if (nextDay === 6) {
-        showToast('Friendly Spirit: "Follow me!"');
-        setStatusBanner('Day 6 Morning: Follow the Friendly Spirit!');
-        setSpiritBanner('Friendly Spirit: "Follow me!"');
+        showToast('Friendly Spirit: "Day 6 Morning: Rebuild the Sacred Anantha Padmanabha Swamy Temple! Follow me!"');
+        setStatusBanner('Day 6 Morning: Rebuild the Anantha Padmanabha Swamy Temple! Walk to the sacred sanctum plinth and press [E]!');
+        setSpiritBanner('Friendly Spirit: "Walk to the Temple and press [E] multiple times to rebuild the tiers and consecrate the sacred deity in the middle!"');
       }
     }, 2000);
   };
 
+  // Build the Villager Military Base on Day 3 (Requires multiple presses of [E] to construct all 6 stages!)
   const executeBuildReinforcedShelter = () => {
     if (shelterBuiltRef.current) {
-      showToast('You have already built the Villager Shelter!');
-      return;
-    }
-    if (shelterBuildingRef.current) {
-      showToast(
-        `Building the Villager Shelter... ${Math.floor(shelterProgressRef.current)}% complete!`
-      );
+      showToast('You have already fully constructed the Fortified Villager Base!');
       return;
     }
     if (dayRef.current < 3) {
       showToast(
-        "Complete Day 1 & Day 2's Villager Quests first — you build the Villager Shelter on Day 3!"
+        "Day 3 Quest: Complete Day 1 Villagers' Quests and Day 2 Enemy Camp attack first — you construct the Villager Base on Day 3!"
       );
       return;
     }
     if (inventoryRef.current.wallMaterials <= 0) {
-      showToast('Need collected materials from the Day 1 enemy soldiers!');
+      showToast('Need fortification materials recovered from the Day 2 Enemy Camp attack!');
       return;
     }
-    // Start the slow Villager Shelter building process (~10 seconds total)
-    shelterBuildingRef.current = true;
-    setShelterBuilding(true);
+
+    const currentStage = baseStageRef.current;
+    const nextStage = currentStage + 1;
+    baseStageRef.current = nextStage;
+    setBaseStage(nextStage);
+
+    // Update 3D visibility of shelterStages
+    if (shelterStagesRef.current && shelterStagesRef.current.length > 0) {
+      shelterStagesRef.current.forEach((st, idx) => {
+        st.visible = idx < nextStage;
+      });
+    }
+
+    const progress = Math.min(100, Math.round((nextStage / 6) * 100));
+    shelterProgressRef.current = progress;
+    setShelterProgress(progress);
+
     sound.playGather();
-    showToast('Started building the Villager Shelter... Constructing slowly (0%)!');
-    setStatusBanner(
-      `Day 3: Slowly constructing the Reinforced Villager Shelter for all the villagers...`
-    );
-    setSpiritBanner(`Friendly Spirit: "Follow me!"`);
+    playerRef.current.attackAnim = 1.0;
+
+    const stageDescriptions = [
+      'Stage 1/6: Stone Earthwork Foundations, Ramparts & Central Campfire Pit (17%)',
+      'Stage 2/6: Heavy Timber Palisade Stockade Walls & Pointed Log Spikes (33%)',
+      'Stage 3/6: Elevated Corner Guard Watchtowers & Flaming Braziers (50%)',
+      'Stage 4/6: Fortified South Gatehouse & Heavy Stockade Entrance Portal (67%)',
+      'Stage 5/6: Interior Villager Barracks Huts with Terracotta Roofs (83%)',
+      'Stage 6/6: Kingdom Armory, Weapon Racks, Training Dummy & Saffron Kingdom Banners (100%)',
+    ];
+
+    if (nextStage < 6) {
+      showToast(`Hammered Base ${stageDescriptions[nextStage - 1]}! Press [E] again to construct next stage.`);
+      setStatusBanner(`Day 3: Building Villager Military Base... ${progress}% (${nextStage}/6 Stages Built). Press [E] to hammer!`);
+      setSpiritBanner(`Friendly Spirit: "Keep building! Press [E] again to construct the next stage (${nextStage}/6)!"`);
+    } else {
+      shelterBuiltRef.current = true;
+      setShelterBuilt(true);
+      sound.playTeleport();
+      showToast(
+        'Day 3 Victory: Villager Military Base Fully Constructed (100%)! All villagers and allies safely garrisoned!'
+      );
+      setStatusBanner(
+        'Day 3 Objective Complete: Fortified Villager Base Built! Night has fallen — ride to your House Bed to sleep [E] until Day 4!'
+      );
+      setSpiritBanner('Friendly Spirit: "The military base is fortified! Return to your House Bed to sleep [E]!"');
+      setIsNight(true);
+      isNightRef.current = true;
+    }
   };
 
   const executeTillOneAcreAndClaimFarmer = () => {
@@ -909,7 +934,7 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
     sound.playGather();
     showToast('Farmer Quest Complete (Once Only): +10 Rice Bags & +10 Hay Stacks! Follow the Spirit to the Chef!');
     setStatusBanner(
-      'Day 2 (Quest 2 of 5): Farmer Quest Complete! Now follow your Friendly Spirit to the Chef/Cook [E] to trade your 10 Rice Bags for 50 Bowls of Curry-Rice!'
+      'Day 1 (Quest 2 of 5): Farmer Quest Complete! Now follow your Friendly Spirit to the Chef/Cook [E] to trade your 10 Rice Bags for 50 Bowls of Curry-Rice!'
     );
     setSpiritBanner(
       'Friendly Spirit: "Farmer Quest Complete! You received 10 Bags of Rice & 10 Stacks of Hay! Now follow me to the next quest — trade your 10 Rice Bags with the Chef/Cook [E] for 50 Bowls of Curry-Rice!"'
@@ -936,9 +961,9 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
     sound.playHeal();
     showToast('Traded with Chef: Received 50 Bowls of Curry-Rice & Rice Bags removed from inventory!');
     setStatusBanner(
-      `Day 2 (Quest 3 of 5): Chef Trade Complete (+50 Curry-Rice Bowls)! Now follow your Friendly Spirit to the Animal Owner [E] to trade 10 Hay Stacks for 10 ${mountPlural}!`
+      `Day 1 (Quest 3 of 5): Chef Trade Complete (+50 Curry-Rice Bowls)! Now follow your Friendly Spirit to the Animal Owner [E] to trade 10 Hay Stacks for 10 ${mountPlural}!`
     );
-    setSpiritBanner(`Friendly Spirit: "Follow me!"`);
+    setSpiritBanner(`Friendly Spirit: "Follow me to the Animal Owner!"`);
   };
 
   const executeTradeWithAnimalOwner = () => {
@@ -960,9 +985,9 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
     sound.playGather();
     showToast(`Animal Owner Quest Complete: +10 ${mountPlural} Acquired & Hay Stacks traded!`);
     setStatusBanner(
-      `Day 2 (Quest 4 of 5): Animal Owner Trade Complete (+10 ${mountPlural})! Now follow your Friendly Spirit to chop 50 Logs [Axe] and trade with the Blacksmith [E]!`
+      `Day 1 (Quest 4 of 5): Animal Owner Trade Complete (+10 ${mountPlural})! Now follow your Friendly Spirit to chop 50 Logs [Axe] and trade with the Blacksmith [E]!`
     );
-    setSpiritBanner(`Friendly Spirit: "Follow me!"`);
+    setSpiritBanner(`Friendly Spirit: "Follow me to chop 50 logs and visit the Blacksmith!"`);
   };
 
   const executeChopLogsAndTradeBlacksmith = () => {
@@ -987,10 +1012,10 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
     sound.playParry();
     showToast('Blacksmith Quest Complete: 50 Logs → +10 Full Iron Armour & Sword Sets!');
     setStatusBanner(
-      `Day 2 (Quest 5 of 5): Blacksmith Quest Complete (+10 Armour & Sword Sets)! Now follow your Friendly Spirit to the Village Square [E] to equip all 10 Buff Villagers!`
+      `Day 1 (Quest 5 of 5): Blacksmith Quest Complete (+10 Armour & Sword Sets)! Now follow your Friendly Spirit to the Village Square [E] to equip all 10 Buff Villagers!`
     );
     setSpiritBanner(
-      `Friendly Spirit: "Blacksmith Quest Complete! You forged 10 Full Iron Armour & Sword Sets! Now follow me to the final Day 2 quest — equip all 10 Buff Villagers in the Village Square [E]!"`
+      `Friendly Spirit: "Blacksmith Quest Complete! You forged 10 Full Iron Armour & Sword Sets! Now follow me to the final Day 1 quest — equip all 10 Buff Villagers in the Village Square [E]!"`
     );
   };
 
@@ -1018,13 +1043,13 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
     }));
     sound.playTeleport();
     showToast(
-      `All Day 2 Villagers' Quests Complete! Night has fallen — follow the Spirit to your House Bed [E] to sleep!`
+      `All Day 1 Villagers' Quests Complete! Night has fallen — follow the Spirit to your House Bed [E] to sleep!`
     );
     setStatusBanner(
-      `Day 2 Night: All Villagers' Quests are complete and all 10 Buff Villagers are armed! Follow the Friendly Spirit to your House Bed [E] to sleep until Day 3!`
+      `Day 1 Night: All Villagers' Quests are complete and all 10 Buff Villagers are armed! Follow the Friendly Spirit to your House Bed [E] to sleep until Day 2!`
     );
     setSpiritBanner(
-      `Friendly Spirit: "You completed all the Villagers' Quests on Day 2! Night has fallen — follow me back to your house bed [E] to sleep and wake up on Day 3 morning!"`
+      `Friendly Spirit: "You completed all the Villagers' Quests on Day 1! Night has fallen — follow me back to your house bed [E] to sleep and wake up on Day 2 morning to attack the Enemy Camp!"`
     );
   };
 
@@ -1036,26 +1061,73 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
     startDay5FinalBoss();
   };
 
+  // Rebuild the Anantha Padmanabha Swamy Temple on Day 6 in 5 progressive tiers, culminating in consecrating the sacred deity in the middle!
   const executeRebuildTempleDay7 = () => {
-    if (!inventoryRef.current.stolenArtifacts) return;
     if (templeRebuiltRef.current) {
-      showToast('The Anantha Padmanabha Swamy Temple is already rebuilt!');
+      showToast('The Anantha Padmanabha Swamy Temple is already fully rebuilt and consecrated!');
       return;
     }
-    if (templeRebuildingRef.current) {
-      showToast(
-        `Reconstructing Anantha Padmanabha Swamy Temple... ${Math.floor(templeProgressRef.current)}% complete!`
-      );
+    if (dayRef.current < 6) {
+      showToast('You rebuild the sacred Anantha Padmanabha Swamy Temple on Day 6!');
       return;
     }
-    dayRef.current = 6;
-    setDay(6);
-    templeRebuildingRef.current = true;
-    setTempleRebuilding(true);
+    if (!inventoryRef.current.stolenArtifacts) {
+      showToast('Defeat the Day 5 Big Boss first to recover the stolen temple artifacts!');
+      return;
+    }
+
+    const currentStage = templeStageRef.current;
+    const nextStage = currentStage + 1;
+    templeStageRef.current = nextStage;
+    setTempleStage(nextStage);
+
+    const progress = Math.min(100, nextStage * 20);
+    templeProgressRef.current = progress;
+    setTempleProgress(progress);
     sound.playGather();
-    showToast('Started reconstructing Anantha Padmanabha Swamy Temple... Constructing slowly (0%)!');
-    setStatusBanner('Day 6: Slowly reconstructing the Anantha Padmanabha Swamy Temple...');
-    setSpiritBanner('Friendly Spirit: "Follow me!"');
+    playerRef.current.attackAnim = 1.0;
+
+    // Progressive gilding of the temple gopuram tiers
+    if (gopuramTiersRef.current && gopuramTiersRef.current.length > 0) {
+      const count = Math.ceil((progress / 100) * gopuramTiersRef.current.length);
+      gopuramTiersRef.current.forEach((tier, idx) => {
+        if (idx < count) {
+          (tier.material as THREE.MeshStandardMaterial).color.setHex(0xfbbf24);
+          (tier.material as THREE.MeshStandardMaterial).metalness = 0.75;
+        }
+      });
+    }
+
+    const templeDescriptions = [
+      'Tier 1/5: Sacred Shaligram Plinth & Carved Granite Pillars Rebuilt (20%)',
+      'Tier 2/5: Sanctum Mandapa Hall Restored & Brass Deepam Lamps Lit (40%)',
+      'Tier 3/5: Gilded Temple Gopuram Tower Raised with Golden Kalashas (60%)',
+      'Tier 4/5: Coiled Sheshanaga Serpent Bed & 5 Hooded Cobras with Nagaratna Jewels (80%)',
+      'Tier 5/5: Sacred Deity Lord Sri Anantha Padmanabha Swamy Consecrated in the Middle (100%)',
+    ];
+
+    if (nextStage < 5) {
+      showToast(`Temple Rebuilding ${templeDescriptions[nextStage - 1]}! Press [E] again to construct next tier.`);
+      setStatusBanner(`Day 6: Reconstructing Sacred Temple... ${progress}% (${nextStage}/5 Tiers Built). Press [E] to construct!`);
+      setSpiritBanner(`Friendly Spirit: "Keep rebuilding! Press [E] again for next sacred tier (${nextStage}/5)!"`);
+    } else {
+      templeRebuiltRef.current = true;
+      setTempleRebuilt(true);
+      if (templeDeityGroupRef.current) {
+        templeDeityGroupRef.current.visible = true;
+      }
+      templeHpRef.current = 2000;
+      setTempleHp(2000);
+      sound.playTeleport();
+      showToast(
+        'Day 6 Grand Victory: Sacred Deity Lord Sri Anantha Padmanabha Swamy Consecrated in the Middle! Temple 100% Rebuilt!'
+      );
+      setStatusBanner(
+        'Day 6 VICTORY: Anantha Padmanabha Swamy Temple Rebuilt with Sacred Deity Consecrated in the Middle!'
+      );
+      setSpiritBanner('Friendly Spirit: "The Sacred Temple is fully consecrated with the Deity in the middle and restored for eternity!"');
+      setTeleportCountdown(5.0);
+    }
   };
 
   const handleContextualInteract = () => {
@@ -1319,9 +1391,19 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
     crossRoad.receiveShadow = true;
     scene.add(crossRoad);
 
-    // Build 3D Anantha Padmanabha Swamy Temple, Reinforced Shelter, Village Houses & 3D Forest Map Guide Arrows
-    const { envGroup, shelterGroup, gopuramTiers, forestArrowsGroup } = createTempleAndVillage3D();
+    // Build 3D Anantha Padmanabha Swamy Temple, Reinforced Base, Village Houses & 3D Forest Map Guide Arrows
+    const {
+      envGroup,
+      shelterGroup,
+      gopuramTiers,
+      forestArrowsGroup,
+      templeDeityGroup,
+      shelterStages,
+    } = createTempleAndVillage3D();
     scene.add(envGroup);
+    shelterStagesRef.current = shelterStages;
+    templeDeityGroupRef.current = templeDeityGroup;
+    gopuramTiersRef.current = gopuramTiers;
 
     // 16 3D Farmland Squares (16 individual squares = 1 Acre; clicking with Hoe tills 1 square at a time!)
     const farmPlotMeshes: {
@@ -1539,6 +1621,13 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
       if (keys['q']) moveStrafe -= 1;
       if (keys['e']) moveStrafe += 1;
 
+      // In-game Virtual Joystick support (Mobile Controls)
+      if (joystickRef.current && joystickRef.current.active) {
+        const joy = joystickRef.current;
+        moveForward += joy.y;
+        p.facing += joy.x * turnSpeed * dt * 1.35;
+      }
+
       const prevPlayerX = p.x;
       const prevPlayerY = p.y;
       const baseSpeed = p.mounted ? 340 : p.stealth ? 85 : 125;
@@ -1601,33 +1690,54 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
       p.x = Math.max(-4950, Math.min(5850, p.x));
       p.y = Math.max(-3400, Math.min(3950, p.y));
 
-      // Track if player ventured into the forest on Day 1, and allow sleeping as soon as they come back to the village on Day 1!
-      if (dayRef.current === 1 && inventoryRef.current.hasMap) {
-        if (p.x > 1050) {
-          hasVisitedForestDay1Ref.current = true;
-        } else if (hasVisitedForestDay1Ref.current && p.x < 900 && !isNightRef.current) {
-          setIsNight(true);
-          isNightRef.current = true;
-        }
-      }
-
       // Proximity [E] Interaction Check
       let promptText: string | null = null;
       if (Math.hypot(p.x - OLD_MAN_POS.x, p.y - OLD_MAN_POS.y) < 78 && !inventoryRef.current.hasMap) {
-        promptText = 'Press [E] to Borrow Forest Map from Old Man (Reveals Forest Guide Arrows!)';
+        promptText = 'Press [E] to Borrow Forest Map from Old Man';
       } else if (
         Math.hypot(p.x - BED_POS.x, p.y - BED_POS.y) < 78 ||
         Math.hypot(p.x - HOUSE_POS.x, p.y - HOUSE_POS.y) < 62
       ) {
-        promptText = isNightRef.current
-          ? `Press [E] to Sleep in Bed until Day ${Math.min(6, dayRef.current + 1)} Morning`
-          : 'Bed (Complete Today’s Quest First to Sleep at Night [E])';
+        if (dayRef.current === 1) {
+          const allVillagerQuestsDone =
+            farmerRewardClaimedRef.current &&
+            cookTradedRef.current &&
+            animalOwnerTradedRef.current &&
+            blacksmithTradedRef.current &&
+            buffVillagersArmedRef.current >= 10;
+          promptText = allVillagerQuestsDone
+            ? 'Press [E] to Sleep in Bed until Day 2 Morning (Enemy Camp Attack)'
+            : 'Bed (Complete Day 1 Villagers’ Quests First to Sleep [E])';
+        } else if (dayRef.current === 2) {
+          promptText =
+            campGuardsDefeatedRef.current >= 10
+              ? 'Press [E] to Sleep in Bed until Day 3 Morning (Build Base)'
+              : `Bed (Defeat 10 Enemy Camp Guards First [${campGuardsDefeatedRef.current}/10] [E])`;
+        } else if (dayRef.current === 3) {
+          promptText = shelterBuiltRef.current
+            ? 'Press [E] to Sleep in Bed until Day 4 Morning (Defend Base)'
+            : `Bed (Build Villager Military Base First [Stage ${baseStageRef.current}/6] [E])`;
+        } else if (dayRef.current === 4) {
+          promptText =
+            raidSoldiersDefeatedRef.current >= 50
+              ? 'Press [E] to Sleep in Bed until Day 5 Morning (Final Boss)'
+              : `Bed (Defeat 50 Enemy Attackers First [${raidSoldiersDefeatedRef.current}/50] [E])`;
+        } else if (dayRef.current === 5) {
+          promptText = bossDefeatedRef.current
+            ? 'Press [E] to Sleep in Bed until Day 6 Morning (Rebuild Temple)'
+            : 'Bed (Defeat Final Boss First [E])';
+        } else {
+          promptText = 'Walk to Temple Sanctum Plinth to Rebuild Temple [E]';
+        }
       } else if (
         Math.hypot(p.x - SHELTER_SITE_POS.x, p.y - SHELTER_SITE_POS.y) < 85 &&
-        !shelterBuiltRef.current &&
-        inventoryRef.current.wallMaterials > 0
+        !shelterBuiltRef.current
       ) {
-        promptText = 'Press [E] to Build Villager Shelter (Day 3 Quest)';
+        if (dayRef.current === 3) {
+          promptText = `Press [E] to Hammer & Build Villager Base (Stage ${baseStageRef.current + 1}/6 - ${Math.round((baseStageRef.current / 6) * 100)}%)`;
+        } else {
+          promptText = 'Villager Base Site (Construct on Day 3 [E])';
+        }
       } else if (Math.hypot(p.x - FARMER_POS.x, p.y - FARMER_POS.y) < 95 && !farmerRewardClaimedRef.current) {
         promptText = 'Press [E] to Claim Farmer Reward (Requires 16/16 Tilled Squares)';
       } else if (
@@ -1653,15 +1763,18 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
         promptText = 'Press [E] to Equip All 10 Buff Villagers';
       } else if (
         Math.hypot(p.x - TEMPLE_POS.x, p.y - TEMPLE_POS.y) < 120 &&
-        inventoryRef.current.stolenArtifacts &&
         !templeRebuiltRef.current
       ) {
-        promptText = 'Press [E] to Rebuild Anantha Padmanabha Swamy Temple (Day 6)';
+        if (dayRef.current === 6) {
+          promptText = `Press [E] to Rebuild Anantha Padmanabha Swamy Temple (Tier ${templeStageRef.current + 1}/5 - ${templeStageRef.current * 20}%)`;
+        } else {
+          promptText = 'Anantha Padmanabha Swamy Temple (Rebuild on Day 6 [E])';
+        }
       }
       setNearbyPrompt(promptText);
 
-      // Reveal & Pulse 3D Forest Map Guide Arrows ONLY on Day 1 after borrowing the Map from the Old Man!
-      forestArrowsGroup.visible = inventoryRef.current.hasMap && dayRef.current === 1;
+      // Reveal & Pulse 3D Forest Map Guide Arrows on Day 2 for attacking Enemy Camp!
+      forestArrowsGroup.visible = dayRef.current === 2;
       if (forestArrowsGroup.visible) {
         forestArrowsGroup.children.forEach((arrowObj, idx) => {
           arrowObj.position.y = 0.58 + Math.sin(now * 0.005 + idx * 0.6) * 0.14;
@@ -1688,78 +1801,17 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
         }
       });
 
-      // Slow construction progression for the 3D Villager Shelter (~10 seconds from 0% to 100%)
-      if (shelterBuildingRef.current && !shelterBuiltRef.current) {
-        const prevFloor = Math.floor(shelterProgressRef.current);
-        shelterProgressRef.current = Math.min(100, shelterProgressRef.current + dt * 10);
-        const nextFloor = Math.floor(shelterProgressRef.current);
-        if (nextFloor !== prevFloor) {
-          setShelterProgress(nextFloor);
-          const remainingMats = Math.max(0, 100 - nextFloor);
-          updateInventory((prev) => ({ ...prev, wallMaterials: remainingMats }));
-          if (nextFloor % 20 === 0 && nextFloor < 100) {
-            sound.playGather();
-            showToast(`Building Villager Shelter... ${nextFloor}% Complete`);
-          }
-        }
-        if (shelterProgressRef.current >= 100) {
-          shelterProgressRef.current = 100;
-          shelterBuildingRef.current = false;
-          shelterBuiltRef.current = true;
-          setShelterProgress(100);
-          setShelterBuilding(false);
-          setShelterBuilt(true);
-          isNightRef.current = true;
-          setIsNight(true);
-          updateInventory((prev) => ({ ...prev, wallMaterials: 0 }));
-          sound.playTeleport();
-          showToast(
-            'Villager Shelter Completed (100%)! Night has fallen on Day 3 — follow the Spirit to your Bed [E] to sleep!'
-          );
-          setStatusBanner(
-            `Day 3 Night: The Reinforced Shelter for all the villagers is complete! Follow the Friendly Spirit back to your Village House Bed [E] to sleep until Day 4!`
-          );
-          setSpiritBanner(`Friendly Spirit: "Follow me!"`);
-        }
+      // Synchronize 3D Villager Military Base Stages (Constructed via multiple 'E' presses on Day 3)
+      if (shelterStagesRef.current && shelterStagesRef.current.length > 0) {
+        shelterStagesRef.current.forEach((st, idx) => {
+          st.visible = idx < baseStageRef.current;
+        });
       }
 
-      // Sync 3D Temple Restoration & Gradual 3D Reinforced Shelter Construction
-      const shelterActive = shelterBuiltRef.current || shelterProgressRef.current > 0;
-      shelterGroup.visible = shelterActive;
-      if (shelterActive) {
-        const buildRatio = shelterBuiltRef.current
-          ? 1
-          : Math.max(0.05, shelterProgressRef.current / 100);
-        shelterGroup.scale.set(1, buildRatio, 1);
-        shelterGroup.position.y = (1 - buildRatio) * -1.4;
-      }
-      // Slow reconstruction progression for the 3D Anantha Padmanabha Swamy Temple (~10 seconds from 0% to 100%)
-      if (templeRebuildingRef.current && !templeRebuiltRef.current) {
-        const prevFloor = Math.floor(templeProgressRef.current);
-        templeProgressRef.current = Math.min(100, templeProgressRef.current + dt * 10);
-        const nextFloor = Math.floor(templeProgressRef.current);
-        if (nextFloor !== prevFloor) {
-          setTempleProgress(nextFloor);
-          if (nextFloor % 20 === 0 && nextFloor < 100) {
-            sound.playGather();
-            showToast(`Reconstructing Anantha Padmanabha Swamy Temple... ${nextFloor}% Complete`);
-          }
-        }
-        if (templeProgressRef.current >= 100) {
-          templeProgressRef.current = 100;
-          templeRebuildingRef.current = false;
-          templeRebuiltRef.current = true;
-          setTempleProgress(100);
-          setTempleRebuilding(false);
-          setTempleRebuilt(true);
-          setTempleHp(2000);
-          templeHpRef.current = 2000;
-          sound.playTeleport();
-          showToast(
-            'Day 6 Victory: Anantha Padmanabha Swamy Temple Rebuilt (100%) with all Recovered Artifacts!'
-          );
-          setTeleportCountdown(5.0);
-        }
+      // Synchronize 3D Temple Sanctum Consecration & Deity in the Middle
+      if (templeDeityGroupRef.current) {
+        templeDeityGroupRef.current.visible =
+          templeRebuiltRef.current || templeStageRef.current >= 5;
       }
 
       if (templeRebuiltRef.current || templeProgressRef.current > 0) {
@@ -2129,7 +2181,7 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
 
       enemiesRef.current = survivingEnemies;
 
-      // Day 1 Weak Guard Defeat Progression -> Collect materials & return to village to sleep (Once Only!)
+      // Day 2 Enemy Camp Guard Defeat Progression -> Collect Base Materials (100) & sleep to wake on Day 3!
       if (newlyDefeatedDay1 > 0) {
         setCampGuardsDefeated((prev) => {
           const next = Math.min(10, prev + newlyDefeatedDay1);
@@ -2155,10 +2207,13 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
             setMounted(true);
             sound.playTeleport();
             showToast(
-              `10 Day 1 Enemy Guards Defeated! Collected Shelter Materials, Full Iron Armour, Powerful Sword & ${mountName}! Return to the Village House to Sleep [E]!`
+              `10 Day 2 Enemy Camp Guards Defeated! Collected Base Materials (100), Full Iron Armour (500 HP), Powerful Sword & ${mountName}! Return to the Village House Bed to Sleep [E]!`
             );
             setStatusBanner(
-              `Day 1 Night: You defeated the 10 Guards and collected Shelter Materials, Full Iron Armour (500 HP), Powerful Sword (50 DMG) & your ${mountName}! Ride back to the Village House and press [E] by your Bed to Sleep until Day 2 Morning!`
+              `Day 2 Night: Enemy Camp destroyed! You collected Base Fortification Materials (100), Full Iron Armour (500 HP), Powerful Sword (50 DMG) & ${mountName}! Ride back to the Village House Bed and press [E] to Sleep until Day 3!`
+            );
+            setSpiritBanner(
+              `Friendly Spirit: "Day 2 victory! You attacked the Enemy Camp and recovered the materials needed to build the Villager Military Base on Day 3! Return to your House Bed to sleep [E]!"`
             );
           }
           return next;
@@ -2233,67 +2288,69 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
       });
 
       // 5. Update 3D Friendly Guardian Spirit:
-      // - Day 1 BEFORE taking map: Spirit is VISIBLE and guides player to Old Man to take map.
-      // - Day 1 AFTER taking map: Spirit shows the arrows and DISAPPEARS for the rest of Day 1!
-      // - Day 2 Morning onwards: Spirit WAKES the player up and is VISIBLE again to guide through Days 2–6!
-      const spiritShouldBeVisible =
-        dayRef.current === 1 ? !inventoryRef.current.hasMap : true;
-      friendlySpirit.visible = spiritShouldBeVisible;
-      spiritBeamMesh.visible = spiritShouldBeVisible;
+      // The spirit is always visible to faithfully guide the warrior through all 6 days!
+      friendlySpirit.visible = true;
+      spiritBeamMesh.visible = true;
 
-      if (spiritShouldBeVisible) {
-        let spiritGuideTarget = { x: OLD_MAN_POS.x, y: OLD_MAN_POS.y };
-        const playerInsideHouse = p.x > 332 && p.x < 418 && p.y > 58 && p.y < 131;
+      let spiritGuideTarget = { x: OLD_MAN_POS.x, y: OLD_MAN_POS.y };
+      const playerInsideHouse = p.x > 332 && p.x < 418 && p.y > 58 && p.y < 131;
 
-        if (dayRef.current === 1 && !inventoryRef.current.hasMap) {
-          // Day 1: Guide player out of house door first, then straight to Old Man Next Door to take the Map
-          spiritGuideTarget = playerInsideHouse
-            ? HOUSE_DOOR_OUTSIDE_POS
-            : { x: OLD_MAN_POS.x - 18, y: OLD_MAN_POS.y + 18 };
-        } else if (isNightRef.current) {
-          // Whenever night falls after completing the day's objective, guide player back to the House Bed to sleep!
-          if (!playerInsideHouse && Math.hypot(p.x - HOUSE_DOOR_OUTSIDE_POS.x, p.y - HOUSE_DOOR_OUTSIDE_POS.y) > 48) {
-            spiritGuideTarget = HOUSE_DOOR_OUTSIDE_POS;
-          } else {
-            spiritGuideTarget = BED_POS;
-          }
-        } else if (dayRef.current === 2) {
-          // Day 2: After the player finishes 1 quest, the Friendly Spirit guides them to the next quest and so on!
-          if (!farmerRewardClaimedRef.current) {
-            const nextUntilledPlot = farmPlotsRef.current.find((pl) => !pl.tilled);
-            spiritGuideTarget = nextUntilledPlot
-              ? { x: nextUntilledPlot.x, y: nextUntilledPlot.y }
-              : FARMER_POS;
-          } else if (!cookTradedRef.current) {
-            spiritGuideTarget = COOK_POS;
-          } else if (!animalOwnerTradedRef.current) {
-            spiritGuideTarget = ANIMAL_OWNER_POS;
-          } else if (!blacksmithTradedRef.current) {
-            if (inventoryRef.current.logs < 50) {
-              const nextTree =
-                treesRef.current.find((t) => t.logsRemaining > 0) ?? treesRef.current[0];
-              spiritGuideTarget = nextTree
-                ? { x: nextTree.x, y: nextTree.y }
-                : BLACKSMITH_POS;
-            } else {
-              spiritGuideTarget = BLACKSMITH_POS;
-            }
-          } else {
-            spiritGuideTarget = { x: 275, y: 275 };
-          }
-        } else if (dayRef.current === 3) {
-          // Day 3: Guide player to build the Villager Shelter!
-          spiritGuideTarget = SHELTER_SITE_POS;
-        } else if (dayRef.current === 4 || dayRef.current === 5) {
-          // Day 4 (50 Soldiers) & Day 5 (Final Boss): Guide toward nearest active enemy
-          const firstEnemy = enemiesRef.current[0];
-          spiritGuideTarget = firstEnemy
-            ? { x: firstEnemy.x, y: firstEnemy.y }
-            : BED_POS;
+      if (isNightRef.current) {
+        // Whenever night falls after completing the day's objective, guide player back to the House Bed to sleep!
+        if (!playerInsideHouse && Math.hypot(p.x - HOUSE_DOOR_OUTSIDE_POS.x, p.y - HOUSE_DOOR_OUTSIDE_POS.y) > 48) {
+          spiritGuideTarget = HOUSE_DOOR_OUTSIDE_POS;
         } else {
-          // Day 6: Guide player to rebuild the Anantha Padmanabha Swamy Temple!
-          spiritGuideTarget = TEMPLE_POS;
+          spiritGuideTarget = BED_POS;
         }
+      } else if (dayRef.current === 1) {
+        // Day 1: Guide player through all the Villagers' Quests!
+        if (!farmerRewardClaimedRef.current) {
+          const nextUntilledPlot = farmPlotsRef.current.find((pl) => !pl.tilled);
+          spiritGuideTarget = nextUntilledPlot
+            ? { x: nextUntilledPlot.x, y: nextUntilledPlot.y }
+            : FARMER_POS;
+        } else if (!cookTradedRef.current) {
+          spiritGuideTarget = COOK_POS;
+        } else if (!animalOwnerTradedRef.current) {
+          spiritGuideTarget = ANIMAL_OWNER_POS;
+        } else if (!blacksmithTradedRef.current) {
+          if (inventoryRef.current.logs < 50) {
+            const nextTree =
+              treesRef.current.find((t) => t.logsRemaining > 0) ?? treesRef.current[0];
+            spiritGuideTarget = nextTree
+              ? { x: nextTree.x, y: nextTree.y }
+              : BLACKSMITH_POS;
+          } else {
+            spiritGuideTarget = BLACKSMITH_POS;
+          }
+        } else if (buffVillagersArmedRef.current < 10) {
+          spiritGuideTarget = { x: 275, y: 275 };
+        } else {
+          spiritGuideTarget = playerInsideHouse ? BED_POS : HOUSE_DOOR_OUTSIDE_POS;
+        }
+      } else if (dayRef.current === 2) {
+        // Day 2: Guide player along the forest path to attack the Enemy Camp!
+        if (campGuardsDefeatedRef.current >= 10) {
+          spiritGuideTarget = playerInsideHouse ? BED_POS : HOUSE_DOOR_OUTSIDE_POS;
+        } else {
+          const firstGuard = enemiesRef.current.find((e) => e.type === 'WEAK_GUARD' && e.hp > 0);
+          spiritGuideTarget = firstGuard
+            ? { x: firstGuard.x, y: firstGuard.y }
+            : { x: 4265, y: -1265 };
+        }
+      } else if (dayRef.current === 3) {
+        // Day 3: Guide player to build the Villager Military Base!
+        spiritGuideTarget = SHELTER_SITE_POS;
+      } else if (dayRef.current === 4 || dayRef.current === 5) {
+        // Day 4 (50 Soldiers) & Day 5 (Final Boss): Guide toward nearest active enemy
+        const firstEnemy = enemiesRef.current[0];
+        spiritGuideTarget = firstEnemy
+          ? { x: firstEnemy.x, y: firstEnemy.y }
+          : BED_POS;
+      } else {
+        // Day 6: Guide player to rebuild the Anantha Padmanabha Swamy Temple!
+        spiritGuideTarget = TEMPLE_POS;
+      }
 
         const gdx = spiritGuideTarget.x - p.x;
         const gdy = spiritGuideTarget.y - p.y;
@@ -2309,7 +2366,6 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
         const beamLen3d = Math.min(8.5, Math.max(1.8, gdist * 0.1));
         spiritBeamMesh.scale.set(1, 1, beamLen3d);
         spiritBeamMat.opacity = 0.45 + Math.sin(now * 0.008) * 0.22;
-      }
 
       // Smooth 3D Camera Choreography (True 3rd-Person Behind-the-Back Chase Cam vs Tactical Overview)
       const px3d = (p.x - 460) * 0.1;
@@ -2408,6 +2464,109 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
     >
       <div ref={mountContainerRef} className="w-full h-full" />
 
+      {/* Top HUD Bar */}
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="absolute top-2.5 inset-x-3 sm:inset-x-5 flex flex-wrap items-center justify-between gap-2.5 z-20 pointer-events-auto"
+      >
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onReturnToLobby}
+            className="px-3 py-1.5 rounded-lg bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 shadow-lg active:scale-95 transition-all cursor-pointer"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Lobby</span>
+          </button>
+
+          <div className="px-3 py-1.5 rounded-lg bg-slate-950/90 border border-amber-500/60 shadow-lg flex items-center gap-2">
+            <span className="text-xs font-bold text-amber-300 font-mono-num">
+              Day {day}/6
+            </span>
+            <span className="text-slate-600">·</span>
+            <span className="text-xs font-semibold text-amber-200">
+              {day === 1
+                ? "Villagers' Quests"
+                : day === 2
+                ? 'Attack Enemy Camp'
+                : day === 3
+                ? 'Build Villager Base'
+                : day === 4
+                ? 'Defend from Attackers'
+                : day === 5
+                ? 'Defeat Big Boss'
+                : 'Rebuild Temple & Consecrate Deity'}
+            </span>
+            <span className="text-slate-600">·</span>
+            <span className="text-xs font-medium text-slate-300">
+              {timeline === 'MEDIEVAL' ? 'Medieval India' : 'British Rule'}
+            </span>
+          </div>
+
+          {/* Health Bar */}
+          <div className="px-3 py-1.5 rounded-lg bg-slate-950/90 border border-slate-800 shadow-lg flex items-center gap-2">
+            <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500 shrink-0" />
+            <div className="w-20 sm:w-28 h-2.5 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+              <div
+                className={`h-full transition-all duration-200 ${
+                  playerHp < 35
+                    ? 'bg-rose-500'
+                    : playerHp < 70
+                    ? 'bg-amber-400'
+                    : 'bg-emerald-400'
+                }`}
+                style={{
+                  width: `${Math.max(0, Math.min(100, (playerHp / (inventory.fullIronArmour ? 500 : 100)) * 100))}%`,
+                }}
+              />
+            </div>
+            <span className="text-xs font-mono-num font-bold text-slate-200">
+              {playerHp}/{inventory.fullIronArmour ? 500 : 100}
+            </span>
+          </div>
+        </div>
+
+        {/* Right HUD Controls */}
+        <div className="flex items-center gap-2">
+          {onToggleDeviceMode && (
+            <button
+              type="button"
+              onClick={onToggleDeviceMode}
+              className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 shadow-lg active:scale-95 transition-all cursor-pointer ${
+                deviceMode === 'mobile'
+                  ? 'bg-amber-500/20 border-amber-400 text-amber-300 hover:bg-amber-500/30'
+                  : 'bg-slate-900/90 border-slate-700 text-slate-200 hover:bg-slate-800'
+              }`}
+            >
+              {deviceMode === 'mobile' ? (
+                <>
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>Mode: Mobile (Joystick)</span>
+                </>
+              ) : (
+                <>
+                  <Monitor className="w-3.5 h-3.5" />
+                  <span>Mode: Computer (WASD)</span>
+                </>
+              )}
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() =>
+              setCameraMode((prev) => (prev === 'FOLLOW' ? 'OVERVIEW' : 'FOLLOW'))
+            }
+            className="px-3 py-1.5 rounded-lg bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-amber-300 text-xs font-semibold flex items-center gap-1.5 shadow-lg active:scale-95 transition-all cursor-pointer"
+          >
+            <Camera className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">
+              Cam: {cameraMode === 'FOLLOW' ? '3rd-Person' : 'Overview'} (V)
+            </span>
+          </button>
+        </div>
+      </div>
+
       {/* Contextual Proximity Interaction Prompt */}
       {nearbyPrompt && !templeRebuilt && (
         <div
@@ -2418,7 +2577,7 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
           className="absolute bottom-20 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg bg-slate-950/92 border border-amber-500/70 flex items-center gap-3 shadow-lg cursor-pointer z-10"
         >
           <span className="text-xs font-semibold text-amber-300">{nearbyPrompt}</span>
-          <button className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded transition-colors whitespace-nowrap">
+          <button className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded transition-colors whitespace-nowrap cursor-pointer">
             Interact [E]
           </button>
         </div>
@@ -2582,6 +2741,124 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
           ))}
         </div>
       </div>
+
+      {/* Mobile Virtual Joystick & Touch Action Overlay */}
+      {deviceMode === 'mobile' && (
+        <>
+          {/* On-Screen Virtual Joystick (Bottom Left) */}
+          <div
+            className="absolute bottom-6 left-4 sm:left-6 z-25 pointer-events-auto"
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <VirtualJoystick
+              size={136}
+              knobSize={52}
+              label="MOVE / STEER"
+              onChange={(data) => {
+                joystickRef.current = data;
+              }}
+            />
+          </div>
+
+          {/* Mobile Action Buttons (Bottom Right) */}
+          <div
+            className="absolute bottom-6 right-4 sm:right-6 z-25 pointer-events-auto flex flex-col items-end gap-2.5"
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            {/* Quick Action Helpers */}
+            <div className="flex flex-wrap items-center justify-end gap-2 max-w-[280px]">
+              {nearbyPrompt && (
+                <button
+                  type="button"
+                  onClick={handleContextualInteract}
+                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-lg animate-pulse active:scale-95 transition-transform cursor-pointer"
+                >
+                  💬 {nearbyPrompt}
+                </button>
+              )}
+
+              {inventory.personalMount && (
+                <button
+                  type="button"
+                  onClick={handleToggleMount}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-bold shadow-md active:scale-95 transition-transform cursor-pointer ${
+                    mounted
+                      ? 'bg-amber-500/30 border-amber-400 text-amber-200'
+                      : 'bg-slate-900/90 border-slate-700 text-slate-200'
+                  }`}
+                >
+                  🐎 {mounted ? `Dismount ${mountName}` : `Ride ${mountName}`}
+                </button>
+              )}
+
+              {inventory.curryRiceBowls > 0 && (
+                <button
+                  type="button"
+                  onClick={handleEatCurryRice}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400 text-emerald-300 font-bold text-xs shadow-md active:scale-95 transition-transform cursor-pointer"
+                >
+                  🍛 Eat (+20 HP) · x{inventory.curryRiceBowls}
+                </button>
+              )}
+
+              <button
+                type="button"
+                onPointerDown={() => {
+                  playerRef.current.isBlocking = true;
+                  setIsBlocking(true);
+                }}
+                onPointerUp={() => {
+                  playerRef.current.isBlocking = false;
+                  setIsBlocking(false);
+                }}
+                onPointerCancel={() => {
+                  playerRef.current.isBlocking = false;
+                  setIsBlocking(false);
+                }}
+                className={`px-3 py-1.5 rounded-lg border text-xs font-bold shadow-md select-none touch-none cursor-pointer ${
+                  isBlocking
+                    ? 'bg-sky-500/40 border-sky-300 text-sky-200 scale-105'
+                    : 'bg-slate-900/90 border-slate-700 text-slate-200'
+                }`}
+              >
+                🛡️ {isBlocking ? 'Blocking!' : 'Hold Block'}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleToggleStealth}
+                className={`px-2.5 py-1.5 rounded-lg border text-xs font-bold shadow-md active:scale-95 transition-transform cursor-pointer ${
+                  stealth
+                    ? 'bg-purple-500/30 border-purple-400 text-purple-200'
+                    : 'bg-slate-900/90 border-slate-700 text-slate-400'
+                }`}
+              >
+                🥷 {stealth ? 'Crouched' : 'Stealth'}
+              </button>
+            </div>
+
+            {/* Primary Big Attack / Action Button */}
+            <button
+              type="button"
+              onClick={() => performPrimaryAction()}
+              className="w-18 h-18 sm:w-20 sm:h-20 rounded-full bg-gradient-to-br from-amber-400 via-amber-500 to-amber-600 border-3 border-amber-200 shadow-[0_0_28px_rgba(245,158,11,0.65)] flex flex-col items-center justify-center text-slate-950 font-extrabold active:scale-90 transition-transform cursor-pointer select-none"
+            >
+              <span className="text-2xl sm:text-3xl leading-none">
+                {activeTool === 'sword' ? '⚔️' : activeTool === 'hoe' ? '⛏️' : '🪓'}
+              </span>
+              <span className="text-[10px] sm:text-[11px] uppercase tracking-wider font-display font-black mt-0.5">
+                {activeTool === 'sword'
+                  ? 'Attack'
+                  : activeTool === 'hoe'
+                  ? 'Till 1 Sq'
+                  : 'Chop'}
+              </span>
+            </button>
+          </div>
+        </>
+      )}
 
       {/* Slow Villager Shelter Construction Progress Overlay */}
       {shelterBuilding && !shelterBuilt && (

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { Gender, LobbyTraveler, TimelineType, TimePod } from '../types/game';
+import { Gender, LobbyTraveler, TimelineType, TimePod, DeviceMode } from '../types/game';
 import {
   createExtreme3DPBRTextures,
   createFriendlySpirit3D,
@@ -9,13 +9,16 @@ import {
   updateHumanRig3D,
 } from '../utils/threeModels';
 import { sound } from '../utils/sound';
-import { Clock, ArrowRight, ArrowLeft, Camera, Sparkles } from 'lucide-react';
+import { Clock, ArrowRight, ArrowLeft, Camera, Sparkles, Smartphone, Monitor } from 'lucide-react';
+import { VirtualJoystick, JoystickData } from './VirtualJoystick';
 
 interface LobbyRoomProps {
   gender: Gender;
   completedTimelines: TimelineType[];
   onTeleport: (timeline: TimelineType, podId: string, squadSize: number) => void;
   onChangeGender: () => void;
+  deviceMode?: DeviceMode;
+  onToggleDeviceMode?: () => void;
 }
 
 const INITIAL_PODS: TimePod[] = [
@@ -48,8 +51,11 @@ export const LobbyRoom: React.FC<LobbyRoomProps> = ({
   completedTimelines,
   onTeleport,
   onChangeGender,
+  deviceMode = 'computer',
+  onToggleDeviceMode,
 }) => {
   const mountContainerRef = useRef<HTMLDivElement | null>(null);
+  const joystickRef = useRef<JoystickData>({ x: 0, y: 0, active: false, angle: 0, distance: 0 });
   const [pods, setPods] = useState<TimePod[]>(INITIAL_PODS);
   const [activePodId, setActivePodId] = useState<string | null>(null);
   const [autoCompanionJoin, setAutoCompanionJoin] = useState<boolean>(true);
@@ -860,6 +866,13 @@ export const LobbyRoom: React.FC<LobbyRoomProps> = ({
       if (keys['q']) moveStrafe -= 1;
       if (keys['e']) moveStrafe += 1;
 
+      // In-game Virtual Joystick support (Mobile Controls)
+      if (joystickRef.current && joystickRef.current.active) {
+        const joy = joystickRef.current;
+        moveForward += joy.y;
+        p.facing += joy.x * turnSpeed * dt * 1.35;
+      }
+
       const speed = 125;
       if (moveForward !== 0 || moveStrafe !== 0) {
         const fwdX = Math.cos(p.facing);
@@ -1173,6 +1186,35 @@ export const LobbyRoom: React.FC<LobbyRoomProps> = ({
         </nav>
         <div className="flex items-center gap-2.5">
           <button
+            onClick={onChangeGender}
+            className="px-3 py-1.5 text-xs font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-md transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer shadow-sm"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Go Back</span>
+          </button>
+          {onToggleDeviceMode && (
+            <button
+              onClick={onToggleDeviceMode}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md border transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                deviceMode === 'mobile'
+                  ? 'bg-amber-500/20 border-amber-400 text-amber-300 hover:bg-amber-500/30'
+                  : 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700'
+              }`}
+            >
+              {deviceMode === 'mobile' ? (
+                <>
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>Mode: Mobile (Joystick)</span>
+                </>
+              ) : (
+                <>
+                  <Monitor className="w-3.5 h-3.5" />
+                  <span>Mode: Computer (WASD)</span>
+                </>
+              )}
+            </button>
+          )}
+          <button
             onClick={() => {
               navigator.clipboard?.writeText(window.location.href);
               setCopiedInvite(true);
@@ -1317,17 +1359,94 @@ export const LobbyRoom: React.FC<LobbyRoomProps> = ({
                 ))}
               </div>
             </div>
+
+            {/* Mobile Virtual Joystick & Action Overlay */}
+            {deviceMode === 'mobile' && (
+              <>
+                {/* On-Screen Virtual Joystick (Bottom Left) */}
+                <div
+                  className="absolute bottom-5 left-4 z-20 pointer-events-auto"
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  <VirtualJoystick
+                    size={126}
+                    knobSize={48}
+                    label="MOVE / STEER"
+                    onChange={(data) => {
+                      joystickRef.current = data;
+                    }}
+                  />
+                </div>
+
+                {/* Mobile Quick Action Buttons (Bottom Right) */}
+                <div
+                  className="absolute bottom-5 right-4 z-20 pointer-events-auto flex flex-col items-end gap-2"
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Find nearest pod or step into R1 / L1
+                      const nearest =
+                        pods.find(
+                          (p) =>
+                            Math.hypot(
+                              p.x - playerRef.current.x,
+                              p.y - playerRef.current.y
+                            ) < 220
+                        ) || pods[4];
+                      enterPodWithSquad(nearest.id, 3);
+                    }}
+                    className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-xl flex items-center gap-1.5 active:scale-95 transition-transform cursor-pointer"
+                  >
+                    <span>🚀 Enter Nearest Pod</span>
+                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCamView((prev) =>
+                          prev === 'THIRD_PERSON' ? 'OVERVIEW' : 'THIRD_PERSON'
+                        )
+                      }
+                      className="px-3 py-1.5 rounded-lg bg-slate-900/95 border border-amber-500/60 text-amber-300 text-xs font-bold shadow-lg active:scale-95 transition-transform cursor-pointer"
+                    >
+                      👁️ Cam View
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onChangeGender}
+                      className="px-3 py-1.5 rounded-lg bg-slate-900/95 border border-slate-700 text-white text-xs font-bold shadow-lg active:scale-95 transition-transform cursor-pointer"
+                    >
+                      ⬅️ Go Back
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-lg bg-slate-900/90 border border-slate-800 text-xs">
             <div className="flex items-center gap-2 text-slate-300">
-              <span>
-                <strong className="text-amber-300">3rd-Person Controls:</strong>{' '}
-                <strong className="text-white">W / S</strong> Walk Forward/Back ·{' '}
-                <strong className="text-white">A / D</strong> (or Mouse Drag) Turn Left/Right ·{' '}
-                <strong className="text-white">Q / E</strong> Strafe ·{' '}
-                <strong className="text-white">Click any Pod</strong> to enter.
-              </span>
+              {deviceMode === 'mobile' ? (
+                <span>
+                  <strong className="text-amber-300">📱 Mobile Joystick Controls:</strong>{' '}
+                  Use the <strong className="text-white">On-Screen Virtual Joystick</strong> (bottom-left) to run forward/backward &amp; steer left/right ·{' '}
+                  Tap <strong className="text-white">🚀 Enter Nearest Pod</strong> or touch any pod on screen ·{' '}
+                  Hold device <strong className="text-amber-400">horizontally</strong> for optimal widescreen combat.
+                </span>
+              ) : (
+                <span>
+                  <strong className="text-amber-300">💻 3rd-Person Controls:</strong>{' '}
+                  <strong className="text-white">W / S</strong> Walk Forward/Back ·{' '}
+                  <strong className="text-white">A / D</strong> (or Mouse Drag) Turn Left/Right ·{' '}
+                  <strong className="text-white">Q / E</strong> Strafe ·{' '}
+                  <strong className="text-white">Click any Pod</strong> to enter.
+                </span>
+              )}
             </div>
             <label className="flex items-center gap-2 cursor-pointer text-slate-300">
               <input

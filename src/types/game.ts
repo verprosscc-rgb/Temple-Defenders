@@ -1,5 +1,6 @@
 export type Gender = 'male' | 'female';
-export type GameScreen = 'GENDER_SELECT' | 'LOBBY' | 'TIMELINE';
+export type DeviceMode = 'computer' | 'mobile';
+export type GameScreen = 'DEVICE_SELECT' | 'GENDER_SELECT' | 'LOBBY' | 'TIMELINE';
 export type TimelineType = 'MEDIEVAL' | 'BRITISH';
 export type ActiveTool = 'sword' | 'hoe' | 'axe';
 
