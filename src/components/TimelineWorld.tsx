@@ -87,7 +87,8 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
   // Core 6-Day State
   const [day, setDay] = useState<number>(1);
   const [isNight, setIsNight] = useState<boolean>(false);
-  const [cameraMode, setCameraMode] = useState<'FOLLOW' | 'OVERVIEW'>('FOLLOW');
+  // Camera view is locked strictly to 3rd-person follow chase camera (no switching allowed)
+  const cameraMode = 'FOLLOW' as const;
   const [statusBanner, setStatusBanner] = useState<string>(
     `Day 1: Follow your Friendly Spirit out of the house to complete the Villagers' Quests (Farmer, Cook, Animal Owner, Blacksmith & Arming 10 Villagers)!`
   );
@@ -109,6 +110,43 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
   const [isBlocking, setIsBlocking] = useState<boolean>(false);
   const [axeHitCount, setAxeHitCount] = useState<number>(0);
   const axeHitCountRef = useRef<number>(0);
+
+  // Long-press and right-click detection for holding curry rice
+  const longPressTimerRef = useRef<number | null>(null);
+  const didLongPressRef = useRef<boolean>(false);
+  const pointerStartPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Real-Time Multiplayer State
+  const clientIdRef = useRef<string>(
+    (() => {
+      const saved = sessionStorage.getItem('chrono_guardian_player_id');
+      if (saved) return saved;
+      const generated = 'plr_' + Math.random().toString(36).slice(2, 10);
+      sessionStorage.setItem('chrono_guardian_player_id', generated);
+      return generated;
+    })()
+  );
+  const remotePlayersRef = useRef<
+    Map<
+      string,
+      {
+        id: string;
+        name: string;
+        gender: Gender;
+        x: number;
+        y: number;
+        facing: number;
+        walkCycle: number;
+        hp: number;
+        maxHp: number;
+        armored: boolean;
+        mounted: boolean;
+        attackAnim: number;
+        activeTool: ActiveTool;
+        color: string;
+      }
+    >
+  >(new Map());
 
   // Inventory & Village Progress State
   const [inventory, setInventory] = useState<Inventory>({
@@ -177,8 +215,8 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
     onArriveCallback: null as (() => void) | null,
   });
 
-  const cameraModeRef = useRef<'FOLLOW' | 'OVERVIEW'>('FOLLOW');
-  cameraModeRef.current = cameraMode;
+  const cameraModeRef = useRef<'FOLLOW'>('FOLLOW');
+  cameraModeRef.current = 'FOLLOW';
   const cameraYawRef = useRef<number>(0);
 
   const isNightRef = useRef<boolean>(false);
@@ -354,25 +392,29 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
     p.onArriveCallback = callback;
   };
 
-  // Eat 1 Bowl of Curry-Rice (+20 Health)
+  // Eat 1 Bowl of Curry-Rice (+20 Health) — triggered by right-clicking or long-pressing while holding Curry-Rice!
   const handleEatCurryRice = () => {
     if (inventoryRef.current.curryRiceBowls <= 0) {
-      showToast('No Curry-Rice Bowls remaining!');
+      showToast('No Curry-Rice Bowls remaining! Trade 10 Rice Bags with Chef [E] for 50 Curry-Rice.');
       return;
     }
-    if (playerRef.current.hp >= playerRef.current.maxHp) {
-      showToast('Health is already full!');
-      return;
-    }
-    const newHp = Math.min(playerRef.current.maxHp, playerRef.current.hp + 20);
+    const currentHp = playerRef.current.hp;
+    const maxHp = playerRef.current.maxHp;
+    const newHp = Math.min(maxHp, currentHp + 20);
     playerRef.current.hp = newHp;
     setPlayerHp(newHp);
+    const remaining = Math.max(0, inventoryRef.current.curryRiceBowls - 1);
     updateInventory((prev) => ({
       ...prev,
-      curryRiceBowls: Math.max(0, prev.curryRiceBowls - 1),
+      curryRiceBowls: remaining,
     }));
     sound.playHeal();
-    showToast('Ate Bowl of Curry-Rice (+20 HP)');
+    playerRef.current.attackAnim = 1.0;
+    if (newHp > currentHp) {
+      showToast(`🍛 Ate Bowl of Curry-Rice (+20 HP! ${newHp}/${maxHp}) · Remaining: x${remaining}`);
+    } else {
+      showToast(`🍛 Ate Bowl of Curry-Rice (HP Full ${maxHp}/${maxHp}) · Remaining: x${remaining}`);
+    }
   };
 
   const handleToggleStealth = () => {
@@ -437,12 +479,14 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
           : 'Selected Slot 4: Empty (Borrow the Map from the Old Man Next Door [E])'
       );
     } else if (slot === 5) {
-      if (inv.curryRiceBowls > 0 && (triggerUse || playerRef.current.hp < playerRef.current.maxHp)) {
+      playerRef.current.activeTool = 'curry';
+      setActiveTool('curry');
+      if (triggerUse && inv.curryRiceBowls > 0) {
         handleEatCurryRice();
       } else {
         showToast(
           inv.curryRiceBowls > 0
-            ? `Selected Slot 5: Curry-Rice Bowls (x${inv.curryRiceBowls}) — Press [F] or click again to eat (+20 HP)`
+            ? `Holding Curry-Rice (x${inv.curryRiceBowls}) — Right-Click or Long-Press to Eat (+20 HP)`
             : 'Selected Slot 5: Empty (Trade 10 Rice Bags with the Chef/Cook for 50 Curry-Rice Bowls)'
         );
       }
@@ -1229,13 +1273,11 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
         handleToggleMount();
       } else if (k === 'f') {
         handleEatCurryRice();
-      } else if (k === 'v') {
-        setCameraMode((prev) => (prev === 'FOLLOW' ? 'OVERVIEW' : 'FOLLOW'));
       } else if (k === 'q') {
         cameraYawRef.current -= 0.25;
       } else if (['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].includes(k)) {
         const slotNum = k === '0' ? 10 : parseInt(k, 10);
-        handleSelectInventorySlotRef.current(slotNum, slotNum === 5 || slotNum === 10);
+        handleSelectInventorySlotRef.current(slotNum, slotNum === 10);
       } else if (k === 'r') {
         playerRef.current.isBlocking = true;
         setIsBlocking(true);
@@ -1251,11 +1293,20 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
       }
     };
 
+    const onGlobalContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      if (selectedSlotRef.current === 5) {
+        handleEatCurryRice();
+      }
+    };
+
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('contextmenu', onGlobalContextMenu);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('contextmenu', onGlobalContextMenu);
     };
   }, []);
 
@@ -1284,6 +1335,98 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
     renderer.domElement.className = 'w-full h-full block cursor-crosshair';
+
+    // Real-Time Multiplayer WebSocket & HTTP Sync
+    const remotePlayerRigs = new Map<string, THREE.Group>();
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    let ws: WebSocket | null = null;
+    let isUnmounted = false;
+
+    try {
+      ws = new WebSocket(wsUrl);
+      ws.onopen = () => {
+        if (isUnmounted || !ws) return;
+        ws.send(
+          JSON.stringify({
+            type: 'timeline:join',
+            id: clientIdRef.current,
+            name: `Guardian-${clientIdRef.current.slice(-4).toUpperCase()}`,
+            gender,
+            timeline,
+            x: playerRef.current.x,
+            y: playerRef.current.y,
+            facing: playerRef.current.facing,
+            walkCycle: playerRef.current.walkCycle,
+            hp: playerRef.current.hp,
+            maxHp: playerRef.current.maxHp,
+            armored: inventoryRef.current.fullIronArmour,
+            mounted: playerRef.current.mounted,
+            attackAnim: playerRef.current.attackAnim,
+            activeTool: playerRef.current.activeTool,
+          })
+        );
+      };
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'timeline:state' && Array.isArray(data.players)) {
+            const nextMap = new Map();
+            data.players.forEach((sp: any) => {
+              if (sp.id !== clientIdRef.current) {
+                nextMap.set(sp.id, sp);
+              }
+            });
+            remotePlayersRef.current = nextMap;
+          }
+        } catch {}
+      };
+    } catch {}
+
+    const syncInterval = window.setInterval(() => {
+      const p = playerRef.current;
+      const inv = inventoryRef.current;
+      const payload = {
+        type: 'timeline:update',
+        id: clientIdRef.current,
+        name: `Guardian-${clientIdRef.current.slice(-4).toUpperCase()}`,
+        gender,
+        timeline,
+        x: p.x,
+        y: p.y,
+        facing: p.facing,
+        walkCycle: p.walkCycle,
+        hp: p.hp,
+        maxHp: p.maxHp,
+        armored: inv.fullIronArmour,
+        mounted: p.mounted,
+        attackAnim: p.attackAnim,
+        activeTool: p.activeTool,
+      };
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(payload));
+      } else {
+        fetch('/api/timeline/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            if (data && Array.isArray(data.players)) {
+              const nextMap = new Map();
+              data.players.forEach((sp: any) => {
+                if (sp.id !== clientIdRef.current) {
+                  nextMap.set(sp.id, sp);
+                }
+              });
+              remotePlayersRef.current = nextMap;
+            }
+          })
+          .catch(() => {});
+      }
+    }, 150);
 
     const handleResize = () => {
       const w = window.innerWidth;
@@ -2373,21 +2516,56 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
       const fwdX3d = Math.cos(p.facing);
       const fwdZ3d = Math.sin(p.facing);
 
-      if (cameraModeRef.current === 'FOLLOW') {
-        const camDist = p.mounted ? 7.2 : 5.6;
-        const camHeight = p.mounted ? 3.8 : 3.0;
-        const desiredCamPos = new THREE.Vector3(
-          px3d - fwdX3d * camDist,
-          camHeight,
-          pz3d - fwdZ3d * camDist
-        );
-        camera.position.lerp(desiredCamPos, 0.14);
-        camera.lookAt(px3d + fwdX3d * 6.0, p.mounted ? 2.1 : 1.7, pz3d + fwdZ3d * 6.0);
-      } else {
-        const overviewPos = new THREE.Vector3(px3d, 165, pz3d + 135);
-        camera.position.lerp(overviewPos, 0.08);
-        camera.lookAt(px3d, 0, pz3d);
+      // Sync and render real connected players in this timeline (up to 80 players)
+      const activeRemoteIds = new Set<string>();
+      for (const [remId, remPlayer] of remotePlayersRef.current.entries()) {
+        activeRemoteIds.add(remId);
+        let rRig = remotePlayerRigs.get(remId);
+        if (!rRig) {
+          const hex = parseInt((remPlayer.color || '#38bdf8').replace('#', '0x'), 16);
+          rRig = createHumanRig({
+            gender: remPlayer.gender,
+            role: 'ALLY',
+            timeline,
+            primaryColor: hex,
+            armored: remPlayer.armored,
+            powerfulSword: remPlayer.armored,
+            playerName: remPlayer.name,
+          });
+          scene.add(rRig);
+          remotePlayerRigs.set(remId, rRig);
+        }
+        updateHumanRig3D(rRig, {
+          x: remPlayer.x,
+          z: remPlayer.y,
+          facing: remPlayer.facing,
+          walkCycle: remPlayer.walkCycle,
+          attackAnim: remPlayer.attackAnim,
+          armored: remPlayer.armored,
+          powerfulSword: remPlayer.armored,
+          mounted: remPlayer.mounted,
+          stealth: false,
+          activeTool: remPlayer.activeTool,
+        });
       }
+
+      for (const [oldId, oldRig] of remotePlayerRigs.entries()) {
+        if (!activeRemoteIds.has(oldId)) {
+          scene.remove(oldRig);
+          remotePlayerRigs.delete(oldId);
+        }
+      }
+
+      // Strictly Locked True 3rd-Person Behind-the-Back Chase Cam
+      const camDist = p.mounted ? 7.2 : 5.6;
+      const camHeight = p.mounted ? 3.8 : 3.0;
+      const desiredCamPos = new THREE.Vector3(
+        px3d - fwdX3d * camDist,
+        camHeight,
+        pz3d - fwdZ3d * camDist
+      );
+      camera.position.lerp(desiredCamPos, 0.14);
+      camera.lookAt(px3d + fwdX3d * 6.0, p.mounted ? 2.1 : 1.7, pz3d + fwdZ3d * 6.0);
 
       renderer.render(scene, camera);
       animationFrameId = requestAnimationFrame(update);
@@ -2395,11 +2573,68 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
 
     animationFrameId = requestAnimationFrame(update);
     return () => {
+      isUnmounted = true;
+      clearInterval(syncInterval);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'timeline:leave', id: clientIdRef.current, timeline }));
+        ws.close();
+      }
       window.removeEventListener('resize', handleResize);
       cancelAnimationFrame(animationFrameId);
       renderer.dispose();
     };
   }, [gender, timeline]);
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Right click detection
+    if (e.button === 2) {
+      if (selectedSlotRef.current === 5) {
+        handleEatCurryRice();
+        return;
+      }
+    }
+
+    // Long press detection while holding Curry Rice (Slot 5)
+    if (selectedSlotRef.current === 5) {
+      didLongPressRef.current = false;
+      pointerStartPosRef.current = { x: e.clientX, y: e.clientY };
+      if (longPressTimerRef.current) {
+        window.clearTimeout(longPressTimerRef.current);
+      }
+      longPressTimerRef.current = window.setTimeout(() => {
+        didLongPressRef.current = true;
+        handleEatCurryRice();
+        if (navigator.vibrate) {
+          navigator.vibrate([40, 30, 40]);
+        }
+      }, 420);
+    }
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (longPressTimerRef.current) {
+      const dx = e.clientX - pointerStartPosRef.current.x;
+      const dy = e.clientY - pointerStartPosRef.current.y;
+      if (Math.hypot(dx, dy) > 16) {
+        window.clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+    }
+  };
+
+  const handlePointerUp = () => {
+    if (longPressTimerRef.current) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (selectedSlotRef.current === 5) {
+      handleEatCurryRice();
+    }
+  };
 
   // 3D Viewport Click Handler:
   // - Clicking NEVER makes the player move!
@@ -2407,6 +2642,15 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
   // - Clicking with an Axe 5 times on a log/tree gives +1 Log.
   // - Clicking with a Hoe on the farmland tills ONLY 1 single square of land (never the full acre!).
   const handleViewportClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // If eaten via long press or right click, skip weapon slash
+    if (didLongPressRef.current) {
+      didLongPressRef.current = false;
+      return;
+    }
+    if (e.button === 2) {
+      return;
+    }
+
     const container = mountContainerRef.current;
     const hitCtx = threeHitRef.current;
     if (!container || !hitCtx) {
@@ -2460,6 +2704,11 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
   return (
     <div
       onClick={handleViewportClick}
+      onContextMenu={handleContextMenu}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
       className="relative w-screen h-screen overflow-hidden bg-[#090d16] text-slate-100 select-none"
     >
       <div ref={mountContainerRef} className="w-full h-full" />
@@ -2551,19 +2800,6 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
               )}
             </button>
           )}
-
-          <button
-            type="button"
-            onClick={() =>
-              setCameraMode((prev) => (prev === 'FOLLOW' ? 'OVERVIEW' : 'FOLLOW'))
-            }
-            className="px-3 py-1.5 rounded-lg bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-amber-300 text-xs font-semibold flex items-center gap-1.5 shadow-lg active:scale-95 transition-all cursor-pointer"
-          >
-            <Camera className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">
-              Cam: {cameraMode === 'FOLLOW' ? '3rd-Person' : 'Overview'} (V)
-            </span>
-          </button>
         </div>
       </div>
 
@@ -2638,7 +2874,7 @@ export const TimelineWorld: React.FC<TimelineWorldProps> = ({
               icon: inventory.curryRiceBowls > 0 ? '🍛' : '',
               active: selectedSlot === 5,
               filled: inventory.curryRiceBowls > 0,
-              onClick: () => handleSelectInventorySlot(5, true),
+              onClick: () => handleSelectInventorySlot(5, false),
             },
             {
               slot: 6,

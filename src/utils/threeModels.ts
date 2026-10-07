@@ -3149,6 +3149,37 @@ export function createHumanRig(opts: HumanRigOptions): THREE.Group {
   axeGroup.visible = false;
   toolHolder.add(axeGroup);
 
+  // 3D Curry Rice Bowl for when holding Curry Rice!
+  const curryBowlGroup = new THREE.Group();
+  const bowlMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.12, 16, 12, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.5, metalness: 0.25 })
+  );
+  bowlMesh.rotation.x = Math.PI;
+  curryBowlGroup.add(bowlMesh);
+  const riceMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.095, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: 0xfffbeb, roughness: 0.9 })
+  );
+  riceMesh.position.set(-0.02, 0.02, 0);
+  curryBowlGroup.add(riceMesh);
+  const curryStew = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.095, 0.075, 0.04, 14),
+    new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.35, metalness: 0.15 })
+  );
+  curryStew.position.set(0.02, 0.015, 0);
+  curryBowlGroup.add(curryStew);
+  const herbMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(0.03, 0.012, 0.03),
+    new THREE.MeshStandardMaterial({ color: 0x16a34a, roughness: 0.8 })
+  );
+  herbMesh.position.set(0.01, 0.045, 0);
+  curryBowlGroup.add(herbMesh);
+
+  curryBowlGroup.position.set(0, -0.04, 0.22);
+  curryBowlGroup.visible = false;
+  toolHolder.add(curryBowlGroup);
+
   // ============================================================================
   // 4. SEAMLESSLY CONNECTED HUMAN LEGS + FULL-LENGTH INDIAN LEHENGA SKIRT (FEMALE) / DHOTI (MALE)
   // ============================================================================
@@ -3376,6 +3407,7 @@ export function createHumanRig(opts: HumanRigOptions): THREE.Group {
     bladeMesh,
     hoeGroup,
     axeGroup,
+    curryBowlGroup,
     mountGroup,
     hpBarBg,
     hpBarFill,
@@ -3536,6 +3568,9 @@ export function updateHumanRig3D(
   ud.swordGroup.visible = tool === 'sword';
   ud.hoeGroup.visible = tool === 'hoe';
   ud.axeGroup.visible = tool === 'axe';
+  if (ud.curryBowlGroup) {
+    ud.curryBowlGroup.visible = tool === 'curry';
+  }
 
   if (ud.bladeMesh) {
     ud.bladeMesh.material = state.powerfulSword ? goldMat : steelBladeMat;

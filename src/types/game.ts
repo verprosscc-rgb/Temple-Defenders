@@ -2,7 +2,7 @@ export type Gender = 'male' | 'female';
 export type DeviceMode = 'computer' | 'mobile';
 export type GameScreen = 'DEVICE_SELECT' | 'GENDER_SELECT' | 'LOBBY' | 'TIMELINE';
 export type TimelineType = 'MEDIEVAL' | 'BRITISH';
-export type ActiveTool = 'sword' | 'hoe' | 'axe';
+export type ActiveTool = 'sword' | 'hoe' | 'axe' | 'curry';
 
 export interface TimePod {
   id: string;

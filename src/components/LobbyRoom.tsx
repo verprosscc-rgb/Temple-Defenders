@@ -59,7 +59,8 @@ export const LobbyRoom: React.FC<LobbyRoomProps> = ({
   const [pods, setPods] = useState<TimePod[]>(INITIAL_PODS);
   const [activePodId, setActivePodId] = useState<string | null>(null);
   const [autoCompanionJoin, setAutoCompanionJoin] = useState<boolean>(true);
-  const [camView, setCamView] = useState<'THIRD_PERSON' | 'OVERVIEW'>('THIRD_PERSON');
+  // Camera view is locked strictly to 3rd-person behind-the-back view (no switching allowed)
+  const camView = 'THIRD_PERSON' as const;
   const [selectedSlot, setSelectedSlot] = useState<number>(2);
   const selectedSlotRef = useRef<number>(2);
   const [realPlayersCount, setRealPlayersCount] = useState<number>(1);
@@ -93,8 +94,7 @@ export const LobbyRoom: React.FC<LobbyRoomProps> = ({
     >
   >(new Map());
 
-  const camViewRef = useRef<'THIRD_PERSON' | 'OVERVIEW'>('THIRD_PERSON');
-  camViewRef.current = camView;
+  const camViewRef = useRef<'THIRD_PERSON'>('THIRD_PERSON');
 
   const playerRef = useRef({
     x: 440,
@@ -128,9 +128,7 @@ export const LobbyRoom: React.FC<LobbyRoomProps> = ({
         playerRef.current.targetX = null;
         playerRef.current.targetY = null;
       }
-      if (k === 'v') {
-        setCamView((prev) => (prev === 'THIRD_PERSON' ? 'OVERVIEW' : 'THIRD_PERSON'));
-      } else if (['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].includes(k)) {
+      if (['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].includes(k)) {
         const slotNum = k === '0' ? 10 : parseInt(k, 10);
         selectedSlotRef.current = slotNum;
         setSelectedSlot(slotNum);
@@ -578,6 +576,76 @@ export const LobbyRoom: React.FC<LobbyRoomProps> = ({
     scene.add(chronoCoreGroup);
 
     // =========================================================================
+    // MONUMENTAL 3D PROMO BILLBOARD IN THE MIDDLE OF THE LOBBY
+    // "TIRED OF THE UNREALISTIC GAME? TEMPLE DEFENDERS WILL BE MORE REALISTIC SOON"
+    // =========================================================================
+    const promoBillboardGroup = new THREE.Group();
+    // Positioned right in the middle of the lobby above the central floor (x: 0, z: -4.5)
+    promoBillboardGroup.position.set(0, 5.8, -4.5);
+
+    const promoTexLoader = new THREE.TextureLoader();
+    const promoTex = promoTexLoader.load('/temple_defenders_banner.jpg');
+    promoTex.colorSpace = THREE.SRGBColorSpace;
+
+    // Heavy Titanium & Dark Bulkhead Frame
+    const promoFrame = new THREE.Mesh(
+      new THREE.BoxGeometry(11.4, 7.8, 0.4),
+      darkBulkheadMat
+    );
+    promoBillboardGroup.add(promoFrame);
+
+    // Glowing Golden Cyber Bezel
+    const promoBezel = new THREE.Mesh(
+      new THREE.BoxGeometry(11.6, 8.0, 0.25),
+      amberGlowMat
+    );
+    promoBezel.position.z = -0.05;
+    promoBillboardGroup.add(promoBezel);
+
+    // Front-Facing High-Res Promo Image
+    const promoMeshFront = new THREE.Mesh(
+      new THREE.PlaneGeometry(11.0, 7.4),
+      new THREE.MeshStandardMaterial({
+        map: promoTex,
+        roughness: 0.2,
+        metalness: 0.1,
+        emissive: new THREE.Color(0xffffff),
+        emissiveMap: promoTex,
+        emissiveIntensity: 0.35,
+      })
+    );
+    promoMeshFront.position.z = 0.22;
+    promoBillboardGroup.add(promoMeshFront);
+
+    // Back-Facing High-Res Promo Image (visible from both ends of the central corridor)
+    const promoMeshBack = new THREE.Mesh(
+      new THREE.PlaneGeometry(11.0, 7.4),
+      new THREE.MeshStandardMaterial({
+        map: promoTex,
+        roughness: 0.2,
+        metalness: 0.1,
+        emissive: new THREE.Color(0xffffff),
+        emissiveMap: promoTex,
+        emissiveIntensity: 0.35,
+      })
+    );
+    promoMeshBack.position.z = -0.22;
+    promoMeshBack.rotation.y = Math.PI;
+    promoBillboardGroup.add(promoMeshBack);
+
+    // Titanium Support Pylons anchoring the billboard to the floor
+    [-5.2, 5.2].forEach((px) => {
+      const pylon = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.18, 0.22, 5.8, 12),
+        hullMetalMat
+      );
+      pylon.position.set(px, -2.9, 0);
+      promoBillboardGroup.add(pylon);
+    });
+
+    scene.add(promoBillboardGroup);
+
+    // =========================================================================
     // 4. 8 FUTURISTIC CYLINDRICAL TIME MACHINE STASIS PODS (L1–L4 & R1–R4)
     // =========================================================================
     const pod3DMap: Record<
@@ -934,45 +1002,60 @@ export const LobbyRoom: React.FC<LobbyRoomProps> = ({
         }
       }
 
-      if (playerPod && autoCompanionJoin) {
-        const assignedToPlayerPod = travelersRef.current.filter(
-          (t) => t.podId === playerPod!.id
-        );
-        if (assignedToPlayerPod.length === 0) {
-          travelersRef.current.slice(0, 2).forEach((t, idx) => {
-            t.podId = playerPod!.id;
-            t.targetX = playerPod!.x + 35 + idx * 45;
-            t.targetY = playerPod!.y + 32;
-          });
-        }
-      }
+      // Bots should spawn in a lobby ONLY when there is only 1 real player!
+      const isOnlyOneRealPlayer = remotePlayersRef.current.size === 0;
 
-      travelersRef.current.forEach((t) => {
-        const tdx = t.targetX - t.x;
-        const tdy = t.targetY - t.y;
-        const dist = Math.hypot(tdx, tdy);
-        if (dist > 3) {
-          t.x += (tdx / dist) * 165 * dt;
-          t.y += (tdy / dist) * 165 * dt;
-          t.facing = Math.atan2(tdy, tdx);
-          t.walkCycle += dt * 2.8;
+      if (isOnlyOneRealPlayer) {
+        if (playerPod && autoCompanionJoin) {
+          const assignedToPlayerPod = travelersRef.current.filter(
+            (t) => t.podId === playerPod!.id
+          );
+          if (assignedToPlayerPod.length === 0) {
+            travelersRef.current.slice(0, 2).forEach((t, idx) => {
+              t.podId = playerPod!.id;
+              t.targetX = playerPod!.x + 35 + idx * 45;
+              t.targetY = playerPod!.y + 32;
+            });
+          }
         }
-        const rig = travelerRigs[t.id];
-        if (rig) {
-          updateHumanRig3D(rig, {
-            x: t.x,
-            z: t.y,
-            facing: t.facing,
-            walkCycle: t.walkCycle,
-            attackAnim: 0,
-            armored: false,
-            powerfulSword: false,
-            mounted: false,
-            stealth: false,
-            activeTool: 'sword',
-          });
-        }
-      });
+
+        travelersRef.current.forEach((t) => {
+          const tdx = t.targetX - t.x;
+          const tdy = t.targetY - t.y;
+          const dist = Math.hypot(tdx, tdy);
+          if (dist > 3) {
+            t.x += (tdx / dist) * 165 * dt;
+            t.y += (tdy / dist) * 165 * dt;
+            t.facing = Math.atan2(tdy, tdx);
+            t.walkCycle += dt * 2.8;
+          }
+          const rig = travelerRigs[t.id];
+          if (rig) {
+            rig.visible = true;
+            updateHumanRig3D(rig, {
+              x: t.x,
+              z: t.y,
+              facing: t.facing,
+              walkCycle: t.walkCycle,
+              attackAnim: 0,
+              armored: false,
+              powerfulSword: false,
+              mounted: false,
+              stealth: false,
+              activeTool: 'sword',
+            });
+          }
+        });
+      } else {
+        // More than 1 real player: Bots despawn completely from lobby and pods!
+        travelersRef.current.forEach((t) => {
+          t.podId = null;
+          const rig = travelerRigs[t.id];
+          if (rig) {
+            rig.visible = false;
+          }
+        });
+      }
 
       // Update 3D Rigs for Real Connected Multiplayer Players (up to 80 in Lobby)
       const activeRemoteIds = new Set<string>();
@@ -1081,17 +1164,20 @@ export const LobbyRoom: React.FC<LobbyRoomProps> = ({
           }
         }
 
-        travelersRef.current.forEach((t) => {
-          if (
-            t.x >= pod.x &&
-            t.x <= pod.x + pod.width &&
-            t.y >= pod.y &&
-            t.y <= pod.y + pod.height &&
-            occ.length < 10
-          ) {
-            occ.push({ id: t.id, name: t.name, gender: t.gender });
-          }
-        });
+        // Only count bot travelers in pod occupants if there is only 1 real player in the lobby!
+        if (isOnlyOneRealPlayer) {
+          travelersRef.current.forEach((t) => {
+            if (
+              t.x >= pod.x &&
+              t.x <= pod.x + pod.width &&
+              t.y >= pod.y &&
+              t.y <= pod.y + pod.height &&
+              occ.length < 10
+            ) {
+              occ.push({ id: t.id, name: t.name, gender: t.gender });
+            }
+          });
+        }
 
         pod.occupants = occ;
 
@@ -1170,12 +1256,22 @@ export const LobbyRoom: React.FC<LobbyRoomProps> = ({
     <div className="min-h-screen bg-[#0b0f17] text-slate-100 flex flex-col">
       {/* Top Bar Contract */}
       <header className="flex items-center justify-between px-6 py-3.5 border-b border-slate-800/80 bg-[#0f1623]">
-        <span className="font-display text-lg font-bold tracking-wider text-amber-400">
-          Chrono Guardians
-        </span>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onChangeGender}
+            className="px-3.5 py-1.5 text-xs font-bold text-slate-100 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer shadow-sm active:scale-95"
+            title="Go back to Avatar Select"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Go Back</span>
+          </button>
+          <span className="font-display text-lg font-bold tracking-wider text-amber-400">
+            Chrono Guardians
+          </span>
+        </div>
         <nav className="hidden md:flex items-center gap-5 text-xs font-medium text-slate-300">
-          <span className="text-emerald-400 font-mono-num">
-            Lobby Capacity: {realPlayersCount + 9} / 80 Max ({realPlayersCount} Real Online)
+          <span className="text-emerald-400 font-mono-num font-bold">
+            Lobby: {realPlayersCount} / 80 Real Players {realPlayersCount === 1 ? '(Bots Active)' : '(Real Players Only)'}
           </span>
           <span>·</span>
           <span>Avatar: {gender === 'male' ? 'Male Guardian' : 'Female Guardian'}</span>
@@ -1185,13 +1281,6 @@ export const LobbyRoom: React.FC<LobbyRoomProps> = ({
           <span>Timelines Cleared: {completedTimelines.length}/2</span>
         </nav>
         <div className="flex items-center gap-2.5">
-          <button
-            onClick={onChangeGender}
-            className="px-3 py-1.5 text-xs font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-md transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer shadow-sm"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Go Back</span>
-          </button>
           {onToggleDeviceMode && (
             <button
               onClick={onToggleDeviceMode}
@@ -1225,17 +1314,6 @@ export const LobbyRoom: React.FC<LobbyRoomProps> = ({
             {copiedInvite ? 'Copied Lobby Link!' : 'Invite Real Players (Max 80)'}
           </button>
           <button
-            onClick={() =>
-              setCamView((prev) => (prev === 'THIRD_PERSON' ? 'OVERVIEW' : 'THIRD_PERSON'))
-            }
-            className="px-3 py-1.5 text-xs font-medium text-amber-300 bg-amber-500/15 border border-amber-500/40 hover:bg-amber-500/25 rounded-md transition-colors whitespace-nowrap flex items-center gap-1.5"
-          >
-            <Camera className="w-3.5 h-3.5" />
-            <span>
-              Cam: {camView === 'THIRD_PERSON' ? '3rd-Person Behind Back' : 'Lobby Overview'} (V)
-            </span>
-          </button>
-          <button
             onClick={onChangeGender}
             className="px-3.5 py-1.5 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-md transition-colors whitespace-nowrap"
           >
@@ -1255,6 +1333,18 @@ export const LobbyRoom: React.FC<LobbyRoomProps> = ({
           <p className="font-display text-base sm:text-xl md:text-2xl font-extrabold tracking-wide text-amber-300 leading-snug">
             DISCLAIMER: THIS GAME IS NOT AN ACT OF CRITISIZING ANY RELIGION BUT IS RATHER A WAY FOR PLAYERS TO UNDERSTAND THE LIVES OF MEDIEVAL INDIANS
           </p>
+        </div>
+      </div>
+
+      {/* FEATURED BANNER IN THE MIDDLE OF THE LOBBY */}
+      <div className="bg-gradient-to-b from-slate-950 via-slate-900/90 to-slate-950 border-b border-amber-500/40 px-6 py-3 flex justify-center">
+        <div className="max-w-[680px] w-full rounded-2xl overflow-hidden border-2 border-amber-400 shadow-[0_0_35px_rgba(245,158,11,0.35)] bg-slate-950 flex flex-col items-center">
+          <img
+            src="/temple_defenders_banner.jpg"
+            alt="Tired of the unrealistic game? Temple Defenders will be more realistic soon"
+            className="w-full h-auto object-contain block max-h-[260px] sm:max-h-[320px]"
+            referrerPolicy="no-referrer"
+          />
         </div>
       </div>
 
@@ -1407,21 +1497,11 @@ export const LobbyRoom: React.FC<LobbyRoomProps> = ({
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() =>
-                        setCamView((prev) =>
-                          prev === 'THIRD_PERSON' ? 'OVERVIEW' : 'THIRD_PERSON'
-                        )
-                      }
-                      className="px-3 py-1.5 rounded-lg bg-slate-900/95 border border-amber-500/60 text-amber-300 text-xs font-bold shadow-lg active:scale-95 transition-transform cursor-pointer"
-                    >
-                      👁️ Cam View
-                    </button>
-                    <button
-                      type="button"
                       onClick={onChangeGender}
-                      className="px-3 py-1.5 rounded-lg bg-slate-900/95 border border-slate-700 text-white text-xs font-bold shadow-lg active:scale-95 transition-transform cursor-pointer"
+                      className="px-3.5 py-1.5 rounded-lg bg-slate-900/95 border border-slate-700 text-white text-xs font-bold shadow-lg active:scale-95 transition-transform cursor-pointer flex items-center gap-1.5"
                     >
-                      ⬅️ Go Back
+                      <ArrowLeft className="w-3.5 h-3.5" />
+                      <span>Go Back</span>
                     </button>
                   </div>
                 </div>

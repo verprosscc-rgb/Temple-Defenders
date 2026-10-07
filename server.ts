@@ -24,7 +24,27 @@ interface ConnectedPlayer {
   lastSeen: number;
 }
 
+interface ConnectedTimelinePlayer {
+  id: string;
+  name: string;
+  gender: 'male' | 'female';
+  timeline: string;
+  x: number;
+  y: number;
+  facing: number;
+  walkCycle: number;
+  hp: number;
+  maxHp: number;
+  armored: boolean;
+  mounted: boolean;
+  attackAnim: number;
+  activeTool: string;
+  color: string;
+  lastSeen: number;
+}
+
 const players = new Map<string, ConnectedPlayer>();
+const timelinePlayers = new Map<string, ConnectedTimelinePlayer>();
 const sockets = new Map<string, WebSocket>();
 
 const PLAYER_COLORS = [
@@ -51,12 +71,41 @@ function pruneStalePlayers() {
   }
 }
 
+function pruneStaleTimelinePlayers() {
+  const now = Date.now();
+  for (const [id, p] of timelinePlayers.entries()) {
+    const ws = sockets.get(id);
+    const wsOpen = ws && ws.readyState === WebSocket.OPEN;
+    if (!wsOpen && now - p.lastSeen > 15000) {
+      timelinePlayers.delete(id);
+    }
+  }
+}
+
 function broadcastLobbyState(excludeId?: string) {
   pruneStalePlayers();
   const payload = JSON.stringify({
     type: 'lobby:state',
     maxPlayers: MAX_LOBBY_PLAYERS,
     players: Array.from(players.values()),
+  });
+
+  for (const [id, client] of sockets.entries()) {
+    if (id !== excludeId && client.readyState === WebSocket.OPEN) {
+      client.send(payload);
+    }
+  }
+}
+
+function broadcastTimelineState(timeline: string, excludeId?: string) {
+  pruneStaleTimelinePlayers();
+  const list = Array.from(timelinePlayers.values()).filter(
+    (p) => p.timeline === timeline
+  );
+  const payload = JSON.stringify({
+    type: 'timeline:state',
+    timeline,
+    players: list,
   });
 
   for (const [id, client] of sockets.entries()) {
@@ -131,11 +180,62 @@ async function startServer() {
             })
           );
           broadcastLobbyState(id);
-        } else if (msg.type === 'player:leave') {
+        } else if (msg.type === 'timeline:join' || msg.type === 'timeline:update') {
+          const id = String(msg.id || '').trim();
+          if (!id) return;
+
+          currentPlayerId = id;
+          sockets.set(id, ws);
+          pruneStaleTimelinePlayers();
+
+          const existing = timelinePlayers.get(id);
+          const color =
+            existing?.color ||
+            PLAYER_COLORS[timelinePlayers.size % PLAYER_COLORS.length];
+
+          const timeline = String(msg.timeline || existing?.timeline || 'MEDIEVAL');
+
+          const updated: ConnectedTimelinePlayer = {
+            id,
+            name: String(msg.name || existing?.name || `Guardian-${id.slice(0, 4)}`).slice(0, 20),
+            gender: msg.gender === 'female' ? 'female' : 'male',
+            timeline,
+            x: typeof msg.x === 'number' ? msg.x : existing?.x ?? 378,
+            y: typeof msg.y === 'number' ? msg.y : existing?.y ?? 98,
+            facing: typeof msg.facing === 'number' ? msg.facing : existing?.facing ?? 0,
+            walkCycle: typeof msg.walkCycle === 'number' ? msg.walkCycle : existing?.walkCycle ?? 0,
+            hp: typeof msg.hp === 'number' ? msg.hp : existing?.hp ?? 100,
+            maxHp: typeof msg.maxHp === 'number' ? msg.maxHp : existing?.maxHp ?? 100,
+            armored: Boolean(msg.armored),
+            mounted: Boolean(msg.mounted),
+            attackAnim: typeof msg.attackAnim === 'number' ? msg.attackAnim : 0,
+            activeTool: String(msg.activeTool || existing?.activeTool || 'sword'),
+            color,
+            lastSeen: Date.now(),
+          };
+
+          timelinePlayers.set(id, updated);
+
+          const list = Array.from(timelinePlayers.values()).filter(
+            (p) => p.timeline === timeline
+          );
+
+          ws.send(
+            JSON.stringify({
+              type: 'timeline:state',
+              timeline,
+              players: list,
+            })
+          );
+          broadcastTimelineState(timeline, id);
+        } else if (msg.type === 'player:leave' || msg.type === 'timeline:leave') {
           if (currentPlayerId) {
+            const tl = timelinePlayers.get(currentPlayerId)?.timeline;
             players.delete(currentPlayerId);
+            timelinePlayers.delete(currentPlayerId);
             sockets.delete(currentPlayerId);
             broadcastLobbyState();
+            if (tl) broadcastTimelineState(tl);
           }
         }
       } catch {
@@ -145,9 +245,12 @@ async function startServer() {
 
     ws.on('close', () => {
       if (currentPlayerId) {
+        const tl = timelinePlayers.get(currentPlayerId)?.timeline;
         players.delete(currentPlayerId);
+        timelinePlayers.delete(currentPlayerId);
         sockets.delete(currentPlayerId);
         broadcastLobbyState();
+        if (tl) broadcastTimelineState(tl);
       }
     });
   });
@@ -212,6 +315,76 @@ async function startServer() {
       players.delete(String(id));
       sockets.delete(String(id));
       broadcastLobbyState();
+    }
+    res.json({ ok: true });
+  });
+
+  app.get('/api/timeline/state', (req, res) => {
+    pruneStaleTimelinePlayers();
+    const timeline = String(req.query.timeline || 'MEDIEVAL');
+    const current = Array.from(timelinePlayers.values()).filter(
+      (p) => p.timeline === timeline
+    );
+    res.json({
+      timeline,
+      count: current.length,
+      players: current,
+    });
+  });
+
+  app.post('/api/timeline/sync', (req, res) => {
+    pruneStaleTimelinePlayers();
+    const { id, name, gender, timeline, x, y, facing, walkCycle, hp, maxHp, armored, mounted, attackAnim, activeTool } = req.body || {};
+    if (!id) {
+      res.status(400).json({ error: 'Missing player id' });
+      return;
+    }
+
+    const targetTimeline = String(timeline || 'MEDIEVAL');
+    const existing = timelinePlayers.get(String(id));
+    const color =
+      existing?.color || PLAYER_COLORS[timelinePlayers.size % PLAYER_COLORS.length];
+
+    const updated: ConnectedTimelinePlayer = {
+      id: String(id),
+      name: String(name || existing?.name || `Guardian-${String(id).slice(0, 4)}`).slice(0, 20),
+      gender: gender === 'female' ? 'female' : 'male',
+      timeline: targetTimeline,
+      x: typeof x === 'number' ? x : existing?.x ?? 378,
+      y: typeof y === 'number' ? y : existing?.y ?? 98,
+      facing: typeof facing === 'number' ? facing : existing?.facing ?? 0,
+      walkCycle: typeof walkCycle === 'number' ? walkCycle : existing?.walkCycle ?? 0,
+      hp: typeof hp === 'number' ? hp : existing?.hp ?? 100,
+      maxHp: typeof maxHp === 'number' ? maxHp : existing?.maxHp ?? 100,
+      armored: Boolean(armored),
+      mounted: Boolean(mounted),
+      attackAnim: typeof attackAnim === 'number' ? attackAnim : 0,
+      activeTool: String(activeTool || existing?.activeTool || 'sword'),
+      color,
+      lastSeen: Date.now(),
+    };
+
+    timelinePlayers.set(String(id), updated);
+    broadcastTimelineState(targetTimeline, String(id));
+
+    const current = Array.from(timelinePlayers.values()).filter(
+      (p) => p.timeline === targetTimeline
+    );
+    res.json({
+      timeline: targetTimeline,
+      count: current.length,
+      players: current,
+    });
+  });
+
+  app.post('/api/timeline/leave', (req, res) => {
+    const { id, timeline } = req.body || {};
+    if (id) {
+      timelinePlayers.delete(String(id));
+      sockets.delete(String(id));
+      if (timeline) {
+        broadcastTimelineState(String(timeline));
+      }
     }
     res.json({ ok: true });
   });
